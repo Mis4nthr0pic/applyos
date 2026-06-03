@@ -30,6 +30,11 @@ import type { ExtractedJobPayload } from "../adapters/extractJob";
 import { isThinJobInfo, jobListingCacheKey } from "../adapters/listingResolver";
 import { findRelevantExperience } from "../matching/experienceEvidence";
 import { getApplicationQuestionFields, hasApplicationQuestionsForAi } from "../shared/applicationFields";
+import {
+  applicationFieldsNeedingAi,
+  countAnsweredApplicationQuestions,
+  mergeScanSuggestions
+} from "../shared/scanSuggestions";
 import { saveFieldAnswer } from "../shared/saveFieldAnswer";
 import { enrichCvSourceFromCatalog, heuristicCvSummary, recommendCvLocally } from "../matching/recommendCv";
 import type { CvRecommendation } from "../matching/recommendCv";
@@ -301,9 +306,10 @@ export function App() {
       }
 
       const nextFit = calculateJobFit(nextResult.jobInfo, experience);
+      const preservedSuggestions = mergeScanSuggestions(suggestions, scan?.fields, nextResult.fields);
       setScan(nextResult);
       setFit(nextFit);
-      setSuggestions({});
+      setSuggestions(preservedSuggestions);
       await db.scanHistory.put({
         id: crypto.randomUUID(),
         url: nextResult.context.url,
@@ -323,18 +329,21 @@ export function App() {
       }
 
       const applicationQuestionCount = getApplicationQuestionFields(nextResult.fields).length;
+      const fieldsNeedingAi = applicationFieldsNeedingAi(nextResult.fields, preservedSuggestions);
+      const alreadyAnsweredCount = countAnsweredApplicationQuestions(nextResult.fields, preservedSuggestions);
       const shouldRunAi =
-        currentSettings.autoGenerateAnswersOnScan && aiConfigured && applicationQuestionCount > 0;
+        currentSettings.autoGenerateAnswersOnScan && aiConfigured && fieldsNeedingAi.length > 0;
 
       if (shouldRunAi) {
         try {
           setAiGenerating(true);
           setAiGeneratingLabel(
-            `Drafting answers for ${applicationQuestionCount} question${applicationQuestionCount === 1 ? "" : "s"}…`
+            `Drafting answers for ${fieldsNeedingAi.length} question${fieldsNeedingAi.length === 1 ? "" : "s"}…`
           );
           const generatedNote = await generateApplicationAnswers(nextResult, nextFit, {
             interactive: false,
-            existingSuggestions: {}
+            existingSuggestions: preservedSuggestions,
+            fieldsToAnswer: fieldsNeedingAi
           });
           if (generatedNote) {
             noticeText += generatedNote.startsWith("AI skipped") ? ` ${generatedNote}` : ` ${generatedNote}`;
@@ -342,6 +351,13 @@ export function App() {
         } catch (error) {
           noticeText += ` AI answer generation failed: ${getErrorMessage(error)}`;
         }
+      } else if (
+        currentSettings.autoGenerateAnswersOnScan &&
+        aiConfigured &&
+        applicationQuestionCount > 0 &&
+        alreadyAnsweredCount > 0
+      ) {
+        noticeText += ` ${alreadyAnsweredCount} application question${alreadyAnsweredCount === 1 ? "" : "s"} already have AI answers — skipped a duplicate OpenRouter call.`;
       } else if (
         !currentSettings.autoGenerateAnswersOnScan &&
         aiConfigured &&
@@ -495,13 +511,20 @@ export function App() {
     options: {
       interactive: boolean;
       existingSuggestions?: Record<string, AnswerSuggestion>;
+      fieldsToAnswer?: DetectedField[];
     }
   ): Promise<string | undefined> {
-    if (!hasApplicationQuestionsForAi(scanResult.fields)) {
+    const applicationFields =
+      options.fieldsToAnswer ??
+      applicationFieldsNeedingAi(scanResult.fields, options.existingSuggestions ?? {});
+
+    if (!applicationFields.length) {
       if (options.interactive) {
         setNotice({
           tone: "info",
-          text: "This form only has basic profile fields — no custom questions need AI answers."
+          text: hasApplicationQuestionsForAi(scanResult.fields)
+            ? "All application questions already have AI answers for this scan."
+            : "This form only has basic profile fields — no custom questions need AI answers."
         });
       }
       return undefined;
@@ -530,11 +553,6 @@ export function App() {
         });
       }
       return "AI skipped: add experience data in the Experience tab (CV library or optimized database).";
-    }
-
-    const applicationFields = getApplicationQuestionFields(scanResult.fields);
-    if (!applicationFields.length) {
-      return undefined;
     }
 
     const questions = applicationFields.map((field) => ({
@@ -610,7 +628,7 @@ export function App() {
 
     await refresh();
     const mergedSuggestions = { ...(options.existingSuggestions ?? {}), ...nextSuggestions };
-    setSuggestions((current) => ({ ...current, ...nextSuggestions }));
+    setSuggestions(mergedSuggestions);
 
     let noticeText = `Generated ${results.length} AI answer${results.length === 1 ? "" : "s"} for ${applicationFields.length} question${applicationFields.length === 1 ? "" : "s"} and saved them to your Answer Bank.`;
     if (fitScore.overallScore < currentSettings.jobFitThreshold) {
@@ -653,7 +671,12 @@ export function App() {
     if (!scan || !fit) return;
     setLoading(true);
     try {
-      await generateApplicationAnswers(scan, fit, { interactive: true, existingSuggestions: suggestions });
+      const fieldsNeedingAi = applicationFieldsNeedingAi(scan.fields, suggestions);
+      await generateApplicationAnswers(scan, fit, {
+        interactive: true,
+        existingSuggestions: suggestions,
+        fieldsToAnswer: fieldsNeedingAi
+      });
     } catch (error) {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     } finally {

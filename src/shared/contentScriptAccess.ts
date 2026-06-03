@@ -1,5 +1,5 @@
 import type { ExtractedJobPayload } from "../adapters/extractJob";
-import { mergeFrameScanResults, type FrameScanResult } from "./scanFrames";
+import { mergeFrameScanResults, mergeFrameScanSnapshot, looksLikeEmbeddedAtsPage, type FrameScanResult } from "./scanFrames";
 import type { ContentMessage, ScanResult } from "./types";
 
 export const CONTENT_SCRIPT_FILE = "assets/content.js";
@@ -91,17 +91,41 @@ async function scanAllFrames(tabId: number, message: Extract<ContentMessage, { t
     return results;
   };
 
-  let results = await collect();
-  const hasFields = results.some((result) => result.fields.length > 0);
-  if (!hasFields) {
-    await ensureContentScript(tabId);
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const retryResults = await collect();
-    if (retryResults.some((result) => result.fields.length > 0)) {
-      results = retryResults;
-    } else if (retryResults.length > results.length) {
-      results = retryResults;
+  const frameSnapshots = new Map<number, FrameScanResult>();
+  let previousTotalFields = -1;
+  let stablePolls = 0;
+
+  const firstPass = await collect();
+  const embeddedAts = looksLikeEmbeddedAtsPage(
+    tabUrl,
+    firstPass.find((result) => result.frameId === 0)?.context.bodyText
+  );
+  const pollDelays = embeddedAts ? [0, 600, 1200, 2000, 2800] : [0, 500];
+
+  for (const delay of pollDelays) {
+    if (delay > 0) {
+      await ensureContentScript(tabId);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
+
+    const batch = delay === 0 && firstPass.length ? firstPass : await collect();
+    for (const result of batch) {
+      frameSnapshots.set(result.frameId, mergeFrameScanSnapshot(frameSnapshots.get(result.frameId), result));
+    }
+
+    const totalFields = [...frameSnapshots.values()].reduce((sum, result) => sum + result.fields.length, 0);
+    if (totalFields > 0 && totalFields === previousTotalFields) {
+      stablePolls += 1;
+      if (stablePolls >= 2 && totalFields >= 4) break;
+    } else {
+      stablePolls = 0;
+    }
+    previousTotalFields = totalFields;
+  }
+
+  const results = [...frameSnapshots.values()];
+  if (!results.length) {
+    results.push(...(await collect()));
   }
 
   return mergeFrameScanResults(results, tabUrl);

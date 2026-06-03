@@ -5,6 +5,47 @@ export interface FrameScanResult extends ScanResult {
   frameId: number;
 }
 
+function pickLongerText(left?: string, right?: string): string {
+  const leftText = left?.trim() ?? "";
+  const rightText = right?.trim() ?? "";
+  return leftText.length >= rightText.length ? leftText : rightText;
+}
+
+export function looksLikeEmbeddedAtsPage(tabUrl: string, bodyText?: string): boolean {
+  const haystack = `${tabUrl} ${bodyText ?? ""}`.toLowerCase();
+  return /greenhouse\.io|gh_jid|grnhse|lever\.co|lever-app|ashbyhq\.com|ashby/i.test(haystack);
+}
+
+/** Union fields from repeated scans of the same frame (lazy iframe / progressive form render). */
+export function mergeFrameScanSnapshot(
+  previous: FrameScanResult | undefined,
+  next: FrameScanResult
+): FrameScanResult {
+  if (!previous) return next;
+
+  const seen = new Set<string>();
+  const fields: DetectedField[] = [];
+  for (const field of [...previous.fields, ...next.fields]) {
+    const key = `${field.selectorHint}:${field.normalizedLabel}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    fields.push({ ...field, frameId: next.frameId });
+  }
+
+  return {
+    ...next,
+    fields,
+    jobInfo: mergeJobInfo(next.jobInfo, previous.jobInfo),
+    context: {
+      ...next.context,
+      jobPostingText: pickLongerText(next.context.jobPostingText, previous.context.jobPostingText),
+      bodyText: pickLongerText(next.context.bodyText, previous.context.bodyText)
+    },
+    jobInfoExtracted: next.jobInfoExtracted || previous.jobInfoExtracted,
+    jobInfoFromListing: next.jobInfoFromListing || previous.jobInfoFromListing
+  };
+}
+
 function pickPrimaryFrame(results: FrameScanResult[]): FrameScanResult {
   return [...results].sort((left, right) => {
     const fieldDelta = right.fields.length - left.fields.length;
