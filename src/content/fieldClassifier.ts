@@ -15,7 +15,7 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["github", /\b(github|gitlab)\b/],
   [
     "social_profile",
-    /\b(discord|telegram|whatsapp|youtube|twitter|instagram|facebook|threads|tiktok|snapchat|twitch|reddit|stackoverflow|medium|substack|behance|dribbble|signal|wechat|mastodon|bluesky|bsky)\b/
+    /\b(discord|telegram|whatsapp|youtube|twitter|instagram|facebook|threads|tiktok|snapchat|twitch|reddit|stackoverflow|medium|substack|behance|dribbble|signal|wechat|mastodon|bluesky|bsky|claude|anthropic|chatgpt|chat gpt|openai|open ai|deepseek|openrouter|open router|gemini|google ai|bard|copilot|github copilot|perplexity|grok|xai|mistral|llama|meta ai|hugging face|huggingface|character ai|cohere|together ai|fireworks ai|replicate|midjourney|stable diffusion|dall-?e|cursor|groq|pi ai|inflection|ollama|poe|replit|phind|kimi|qwen|runway|elevenlabs)\b/
   ],
   ["portfolio", /\b(portfolio|work samples?)\b/],
   ["website", /\b(personal website|website|web site)\b/],
