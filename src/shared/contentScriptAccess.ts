@@ -1,4 +1,6 @@
-import type { ContentMessage } from "./types";
+import type { ExtractedJobPayload } from "../adapters/extractJob";
+import { mergeFrameScanResults, mergeFrameScanSnapshot, looksLikeEmbeddedAtsPage, looksLikeNativeAtsPage, type FrameScanResult } from "./scanFrames";
+import type { ContentMessage, ScanResult } from "./types";
 
 export const CONTENT_SCRIPT_FILE = "assets/content.js";
 
@@ -26,9 +28,19 @@ export function isMissingContentScriptError(error: unknown): boolean {
   return /Receiving end does not exist|Could not establish connection/i.test(message);
 }
 
-export async function pingTab(tabId: number): Promise<boolean> {
+export async function getFrameIds(tabId: number): Promise<number[]> {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "PING" });
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    const frameIds = frames?.map((frame) => frame.frameId) ?? [0];
+    return frameIds.length ? frameIds : [0];
+  } catch {
+    return [0];
+  }
+}
+
+async function pingFrame(tabId: number, frameId: number): Promise<boolean> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "PING" }, { frameId });
     return true;
   } catch {
     return false;
@@ -36,21 +48,184 @@ export async function pingTab(tabId: number): Promise<boolean> {
 }
 
 export async function ensureContentScript(tabId: number): Promise<void> {
-  if (await pingTab(tabId)) return;
+  const frameIds = await getFrameIds(tabId);
+  const alive = await Promise.all(frameIds.map((frameId) => pingFrame(tabId, frameId)));
+  if (alive.some(Boolean)) return;
 
   await chrome.scripting.executeScript({
-    target: { tabId },
+    target: { tabId, allFrames: true },
     files: [CONTENT_SCRIPT_FILE]
   });
 
-  if (!(await pingTab(tabId))) {
+  const afterInject = await Promise.all(frameIds.map((frameId) => pingFrame(tabId, frameId)));
+  if (!afterInject.some(Boolean)) {
     throw new Error("Content script failed to attach to this tab.");
   }
 }
 
-export async function sendMessageToTab<T>(tabId: number, message: ContentMessage): Promise<T> {
+async function sendMessageToFrame<T>(
+  tabId: number,
+  frameId: number,
+  message: ContentMessage
+): Promise<T | undefined> {
+  try {
+    return (await chrome.tabs.sendMessage(tabId, message, { frameId })) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function scanAllFrames(tabId: number, message: Extract<ContentMessage, { type: "SCAN_PAGE" }>): Promise<ScanResult> {
   await ensureContentScript(tabId);
-  return (await chrome.tabs.sendMessage(tabId, message)) as T;
+  const tab = await chrome.tabs.get(tabId);
+  const tabUrl = tab.url ?? "";
+
+  const collect = async (): Promise<FrameScanResult[]> => {
+    const frameIds = await getFrameIds(tabId);
+    const results: FrameScanResult[] = [];
+    for (const frameId of frameIds) {
+      const response = await sendMessageToFrame<ScanResult | { error?: string }>(tabId, frameId, message);
+      if (!response || !("fields" in response)) continue;
+      results.push({ ...response, frameId });
+    }
+    return results;
+  };
+
+  const frameSnapshots = new Map<number, FrameScanResult>();
+  let previousTotalFields = -1;
+  let stablePolls = 0;
+
+  const firstPass = await collect();
+  const embeddedAts = looksLikeEmbeddedAtsPage(
+    tabUrl,
+    firstPass.find((result) => result.frameId === 0)?.context.bodyText
+  );
+  const nativeAts = looksLikeNativeAtsPage(tabUrl);
+  const pollDelays = embeddedAts ? [0, 600, 1200, 2000, 2800] : nativeAts ? [0, 400, 900] : [0, 500];
+
+  for (const delay of pollDelays) {
+    if (delay > 0) {
+      await ensureContentScript(tabId);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    const batch = delay === 0 && firstPass.length ? firstPass : await collect();
+    for (const result of batch) {
+      frameSnapshots.set(result.frameId, mergeFrameScanSnapshot(frameSnapshots.get(result.frameId), result));
+    }
+
+    const totalFields = [...frameSnapshots.values()].reduce((sum, result) => sum + result.fields.length, 0);
+    if (totalFields > 0 && totalFields === previousTotalFields) {
+      stablePolls += 1;
+      if (stablePolls >= 2 && totalFields >= 4) break;
+    } else {
+      stablePolls = 0;
+    }
+    previousTotalFields = totalFields;
+  }
+
+  const results = [...frameSnapshots.values()];
+  if (!results.length) {
+    results.push(...(await collect()));
+  }
+
+  return mergeFrameScanResults(results, tabUrl);
+}
+
+async function extractJobFromAllFrames(tabId: number): Promise<ExtractedJobPayload> {
+  await ensureContentScript(tabId);
+  const tab = await chrome.tabs.get(tabId);
+  const tabUrl = tab.url ?? "";
+  const frameIds = await getFrameIds(tabId);
+  const payloads: Array<ExtractedJobPayload & { frameId: number }> = [];
+
+  for (const frameId of frameIds) {
+    const response = await sendMessageToFrame<ExtractedJobPayload | { error?: string }>(tabId, frameId, {
+      type: "EXTRACT_JOB_INFO"
+    });
+    if (!response || !("jobInfo" in response)) continue;
+    payloads.push({ ...response, frameId });
+  }
+
+  if (!payloads.length) {
+    throw new Error("ApplyOS could not extract job info from this page.");
+  }
+
+  const scanLike: FrameScanResult[] = payloads.map((payload) => ({
+    context: payload.context,
+    pageType: payload.pageType,
+    platform: payload.platform,
+    adapterName: payload.adapterName,
+    jobInfo: payload.jobInfo,
+    fields: [],
+    watching: false,
+    jobInfoFromListing: payload.jobInfoFromListing,
+    frameId: payload.frameId
+  }));
+
+  const merged = mergeFrameScanResults(scanLike, tabUrl);
+  const primary = payloads.find((payload) => payload.frameId === 0) ?? payloads[0];
+
+  return {
+    ...primary,
+    context: merged.context,
+    pageType: merged.pageType,
+    platform: merged.platform,
+    adapterName: merged.adapterName,
+    jobInfo: merged.jobInfo,
+    jobInfoFromListing: merged.jobInfoFromListing ?? primary.jobInfoFromListing
+  };
+}
+
+async function broadcastMessage<T>(tabId: number, message: ContentMessage): Promise<T | undefined> {
+  await ensureContentScript(tabId);
+  const frameIds = await getFrameIds(tabId);
+  let lastResult: T | undefined;
+
+  for (const frameId of frameIds) {
+    const response = await sendMessageToFrame<T>(tabId, frameId, message);
+    if (response !== undefined) lastResult = response;
+  }
+
+  return lastResult;
+}
+
+export async function sendMessageToTab<T>(tabId: number, message: ContentMessage): Promise<T> {
+  if (message.type === "SCAN_PAGE") {
+    return (await scanAllFrames(tabId, message)) as T;
+  }
+
+  if (message.type === "EXTRACT_JOB_INFO") {
+    return (await extractJobFromAllFrames(tabId)) as T;
+  }
+
+  if (message.type === "SET_DYNAMIC_WATCH") {
+    return (await broadcastMessage<T>(tabId, message)) as T;
+  }
+
+  await ensureContentScript(tabId);
+
+  const frameId = "frameId" in message ? message.frameId : undefined;
+  if (frameId !== undefined) {
+    const response = await sendMessageToFrame<T>(tabId, frameId, message);
+    if (response !== undefined) return response;
+    throw new Error("ApplyOS could not reach the field frame on this page.");
+  }
+
+  try {
+    return (await chrome.tabs.sendMessage(tabId, message)) as T;
+  } catch (error) {
+    if (!isMissingContentScriptError(error)) throw error;
+  }
+
+  const frameIds = await getFrameIds(tabId);
+  for (const candidateFrameId of frameIds) {
+    if (candidateFrameId === 0) continue;
+    const response = await sendMessageToFrame<T>(tabId, candidateFrameId, message);
+    if (response !== undefined) return response;
+  }
+
+  throw new Error("ApplyOS could not reach the active tab frame.");
 }
 
 export async function resolveTargetTabId(preferredTabId?: number): Promise<number> {

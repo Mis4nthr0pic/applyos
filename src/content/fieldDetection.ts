@@ -1,3 +1,4 @@
+import { dedupeDetectedFields } from "../shared/dedupeFields";
 import type { DetectedField, FieldCategory, FieldType, InsertResult } from "../shared/types";
 import { normalizeText, optionMatches, uniqueStrings } from "./text";
 import { isElementVisible } from "./pageContext";
@@ -79,7 +80,7 @@ export function extractDetectedFields(platform: string): DetectedField[] {
 
   extractButtonChoiceGroups(platform, seen, result);
   result.forEach((field) => knownFieldIds.add(field.fieldId));
-  return result;
+  return dedupeDetectedFields(result);
 }
 
 export function attachDependencyListeners(): () => void {

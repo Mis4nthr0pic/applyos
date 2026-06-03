@@ -177,7 +177,7 @@ src/
 ## Limitations
 
 - Job pages and ATS forms change frequently. Rescan after page changes and review every detected label.
-- Some Workday and other ATS flows render application forms inside cross-origin iframes that Chrome content scripts cannot access from the parent page.
+- Embedded ATS forms (Greenhouse, Lever, Ashby on custom career sites) are scanned across all page frames. If a form loads lazily after you click Apply, wait for it to appear and rescan.
 - PDF extraction quality depends on the PDF containing selectable text. Image-only or scanned PDFs need OCR outside ApplyOS.
 - Local heuristic CV parsing is intentionally conservative and will not reconstruct complex resume layouts perfectly.
 - Job fit scoring is a local keyword and seniority heuristic, not a hiring prediction.

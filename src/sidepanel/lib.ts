@@ -60,7 +60,8 @@ export async function insertIntoField(field: DetectedField, value: string): Prom
     type: "INSERT_FIELD",
     fieldId: field.fieldId,
     selectorHint: field.selectorHint,
-    value
+    value,
+    frameId: field.frameId
   });
 }
 
