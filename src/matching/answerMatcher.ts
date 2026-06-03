@@ -1,5 +1,6 @@
 import Fuse, { type FuseResult } from "fuse.js";
 import { isUnsafeShortAnswer } from "../shared/answerQuality";
+import { isProfileLinkField } from "../shared/profileLinkFields";
 import type { DetectedField, FieldCategory, SavedAnswer } from "../shared/types";
 import { normalizeText } from "./normalize";
 
@@ -48,6 +49,7 @@ export function findAnswerMatches(
   limit = 3
 ): AnswerMatch[] {
   if (!field.label.trim() || answers.length === 0) return [];
+  if (isProfileLinkField(field)) return [];
 
   const fuse = new Fuse(answers, {
     includeScore: true,
@@ -116,6 +118,7 @@ export function findBestScreeningAnswer(
   minConfidence = 0.55
 ): AnswerMatch | undefined {
   if (!answers.length) return undefined;
+  if (isProfileLinkField(field)) return undefined;
 
   const exact = answers.find((answer) => answer.normalizedQuestion === field.normalizedLabel);
   if (exact && !isUnsafeShortAnswer(field, exact.answer)) {

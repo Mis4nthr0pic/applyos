@@ -65,6 +65,7 @@ export type FieldCategory =
   | "city"
   | "linkedin"
   | "github"
+  | "social_profile"
   | "portfolio"
   | "website"
   | "resume"

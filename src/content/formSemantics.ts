@@ -1,3 +1,4 @@
+import { PROFILE_LINK_PLATFORM_PATTERN } from "../shared/profileLinkFields";
 import { isElementVisible } from "./pageContext";
 import { normalizeText, uniqueStrings } from "./text";
 
@@ -202,6 +203,9 @@ function scoreQuestionLabel(label: string): number {
   if (/\b(linkedin profile|linkedin url|github profile|portfolio url|resume|cover letter)\b/i.test(label)) {
     score -= 80;
   }
+  if (PROFILE_LINK_PLATFORM_PATTERN.test(label) && /\b(profile|url|link|username|handle|account|channel)\b/i.test(label)) {
+    score -= 80;
+  }
   if (/^(type here|enter|select|choose|search)\b/i.test(label)) {
     score -= 100;
   }
@@ -210,6 +214,9 @@ function scoreQuestionLabel(label: string): number {
   }
   if (/\b(linkedin profile|what s reason|reason you are looking)\b/i.test(label) && label.includes("?")) {
     score -= 100;
+  }
+  if (PROFILE_LINK_PLATFORM_PATTERN.test(label) && label.includes("?")) {
+    score -= 60;
   }
   return score;
 }

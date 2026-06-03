@@ -1,4 +1,5 @@
 import type { FieldCategory } from "../shared/types";
+import { PROFILE_LINK_PLATFORM_PATTERN } from "../shared/profileLinkFields";
 import { normalizeText } from "./text";
 
 const RULES: Array<[FieldCategory, RegExp]> = [
@@ -11,7 +12,11 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["state", /\b(state|province|region)\b/],
   ["city", /\b(city|town)\b/],
   ["linkedin", /\blinkedin\b/],
-  ["github", /\bgithub\b/],
+  ["github", /\b(github|gitlab)\b/],
+  [
+    "social_profile",
+    /\b(discord|telegram|whatsapp|youtube|twitter|instagram|facebook|threads|tiktok|snapchat|twitch|reddit|stackoverflow|medium|substack|behance|dribbble|signal|wechat|mastodon|bluesky|bsky)\b/
+  ],
   ["portfolio", /\b(portfolio|work samples?)\b/],
   ["website", /\b(personal website|website|web site)\b/],
   ["resume", /\b(resume|cv|curriculum vitae)\b/],
@@ -62,7 +67,7 @@ export function classifyField(label: string, fieldType: string): FieldCategory {
   const normalized = normalizeText(label);
 
   if (
-    /\blinkedin\b/.test(normalized) &&
+    PROFILE_LINK_PLATFORM_PATTERN.test(normalized) &&
     (label.includes("?") || /\b(reason|change|how many|visa|global markets)\b/i.test(label))
   ) {
     for (const [category, pattern] of RULES) {

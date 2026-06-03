@@ -1,3 +1,4 @@
+import { isPollutedProfileQuestionLabel, isProfileLinkField } from "./profileLinkFields";
 import { EXPERIENCE_QUESTION_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "./constants";
 import type { DetectedField, FieldCategory } from "./types";
 import { looksLikeApplicationQuestion } from "./screeningFields";
@@ -22,11 +23,7 @@ const CUSTOM_ANSWER_NAME_PATTERN =
 const PROFILE_FIELD_TYPES = new Set(["file"]);
 
 function isPollutedProfileLabel(label: string): boolean {
-  const normalized = label.toLowerCase();
-  return (
-    /\b(linkedin profile|linkedin url)\b/.test(normalized) &&
-    (normalized.includes("?") || /\b(reason|change|visa|global markets|how many)\b/.test(normalized))
-  );
+  return isPollutedProfileQuestionLabel(label);
 }
 
 function isMisclassifiedProfileQuestion(field: DetectedField): boolean {
@@ -56,6 +53,7 @@ export function looksLikeNamedCustomAnswer(field: DetectedField): boolean {
 export function isApplicationQuestionField(field: DetectedField): boolean {
   if (field.isDynamic || field.isDisabled) return false;
   if (PROFILE_FIELD_TYPES.has(field.fieldType)) return false;
+  if (isProfileLinkField(field) && !isPollutedProfileLabel(field.label)) return false;
 
   const customAnswer = looksLikeNamedCustomAnswer(field);
   const pollutedProfile = isMisclassifiedProfileQuestion(field);
@@ -120,7 +118,9 @@ function extractPrimaryQuestionFromLabel(label: string): string {
     if (questionPart) return `${questionPart}?`.replace(/\*+$/, "").trim();
   }
 
-  const withoutProfilePrefix = label.replace(/^linkedin profile\s+/i, "").trim();
+  const withoutProfilePrefix = label
+    .replace(/^(linkedin profile|github profile|github\/gitlab profile url)\s+/i, "")
+    .trim();
   return withoutProfilePrefix || label;
 }
 
