@@ -3,6 +3,7 @@ import {
   isInjectableTabUrl,
   resolveTargetTabId,
   sendMessageToTab,
+  CONTENT_SCRIPT_FILE,
   type BackgroundMessage
 } from "../shared/contentScriptAccess";
 import { saveFieldAnswer } from "../shared/saveFieldAnswer";
@@ -22,6 +23,16 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !isInjectableTabUrl(tab.url)) return;
   sendMessageToTab(tabId, { type: "PING" }).catch(() => undefined);
+});
+
+chrome.webNavigation.onCompleted.addListener((details) => {
+  if (details.frameId === 0 || !isInjectableTabUrl(details.url)) return;
+  chrome.scripting
+    .executeScript({
+      target: { tabId: details.tabId, frameIds: [details.frameId] },
+      files: [CONTENT_SCRIPT_FILE]
+    })
+    .catch(() => undefined);
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {

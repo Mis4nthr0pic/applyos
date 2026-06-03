@@ -18,6 +18,8 @@ export interface PageContext {
   hasForms: boolean;
   buttons: string[];
   links: string[];
+  /** iframe[src] values from the top document — used to detect embedded ATS forms. */
+  iframeSources?: string[];
   meta: Record<string, string>;
   jsonLd: unknown[];
 }

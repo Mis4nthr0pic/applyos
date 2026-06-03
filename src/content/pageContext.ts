@@ -6,6 +6,13 @@ export function buildPageContextFromHtml(html: string, url: string): PageContext
   return buildPageContextFromDocument(doc, url);
 }
 
+function collectIframeSources(doc: Document): string[] {
+  return Array.from(doc.querySelectorAll<HTMLIFrameElement>("iframe[src]"))
+    .map((frame) => frame.src)
+    .filter(Boolean)
+    .slice(0, 30);
+}
+
 export function buildPageContextFromDocument(doc: Document, url: string): PageContext {
   const parsed = new URL(url);
   const meta: Record<string, string> = {};
@@ -49,6 +56,7 @@ export function buildPageContextFromDocument(doc: Document, url: string): PageCo
       .map((link) => `${link.textContent?.trim() || ""} ${link.href}`.trim())
       .filter(Boolean)
       .slice(0, 200),
+    iframeSources: collectIframeSources(doc),
     meta,
     jsonLd
   };
@@ -92,6 +100,7 @@ export function buildPageContext(): PageContext {
       .map((link) => `${link.textContent?.trim() || ""} ${link.href}`.trim())
       .filter(Boolean)
       .slice(0, 200),
+    iframeSources: collectIframeSources(document),
     meta,
     jsonLd
   };

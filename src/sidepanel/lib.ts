@@ -5,6 +5,7 @@ import type {
   InsertResult,
   UserProfile
 } from "../shared/types";
+import { formatPhoneForProfile } from "../shared/phoneFormat";
 
 export async function sendToActiveTab<T>(message: ContentMessage): Promise<T> {
   const response = (await chrome.runtime.sendMessage({
@@ -52,6 +53,9 @@ export function profileValueForField(
   };
   const key = field.category ? map[field.category] : undefined;
   const value = key ? profile[key] : undefined;
+  if (field.category === "phone") {
+    return formatPhoneForProfile(profile.phone, profile.country);
+  }
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 

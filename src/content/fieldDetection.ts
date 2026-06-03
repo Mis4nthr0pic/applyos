@@ -12,6 +12,12 @@ import {
 } from "./choiceGroups";
 import { isComboboxInput, readComboboxDisplayValue } from "./combobox";
 import {
+  insertPhoneFieldValue,
+  isCompositePhoneInput,
+  isPhoneWidgetChrome,
+  readPhoneFieldValue
+} from "./phoneInput";
+import {
   extractQuestionLabel,
   findFieldContainer,
   findNearbyHeading,
@@ -110,6 +116,7 @@ function inferDependencies(category: FieldCategory, isDynamic: boolean): string[
 }
 
 function shouldIgnoreField(element: HTMLElement): boolean {
+  if (isPhoneWidgetChrome(element)) return true;
   if (isManagedChoiceInput(element)) return true;
 
   if (element instanceof HTMLInputElement && element.type === "radio") {
@@ -305,6 +312,7 @@ export function readFieldValue(element: HTMLElement | null): string {
       const display = readComboboxDisplayValue(element);
       if (display) return display;
     }
+    if (isCompositePhoneInput(element)) return readPhoneFieldValue(element);
     return element.value;
   }
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
@@ -420,6 +428,10 @@ export function insertFieldValue(
 
   if (element instanceof HTMLInputElement && element.type === "radio") {
     return { ok: false, error: `No confident radio option match for "${value}".` };
+  }
+
+  if (element instanceof HTMLInputElement && isCompositePhoneInput(element)) {
+    return insertPhoneFieldValue(element, value);
   }
 
   element.focus();
