@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "ApplyOS",
+  "description": "A local-first, honest job application assistant.",
+  "version": "0.2.0",
+  "permissions": ["activeTab", "storage", "scripting", "sidePanel", "tabs"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open ApplyOS"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["assets/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

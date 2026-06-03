@@ -1,0 +1,393 @@
+export type PageType =
+  | "job_listing_page"
+  | "job_application_form"
+  | "company_careers_page"
+  | "job_search_results_page"
+  | "unknown_page";
+
+export interface PageContext {
+  url: string;
+  hostname: string;
+  pathname: string;
+  title: string;
+  bodyText: string;
+  hasForms: boolean;
+  buttons: string[];
+  links: string[];
+  meta: Record<string, string>;
+  jsonLd: unknown[];
+}
+
+export interface JobInfo {
+  id?: string;
+  title?: string;
+  company?: string;
+  location?: string;
+  department?: string;
+  description?: string;
+  employmentType?: string;
+  requirements: string[];
+  responsibilities: string[];
+  niceToHave: string[];
+  benefits?: string[];
+  salaryRange?: string;
+  sourceUrl: string;
+  platform: string;
+  detectedAt: string;
+}
+
+export type FieldType =
+  | "text"
+  | "textarea"
+  | "email"
+  | "url"
+  | "tel"
+  | "number"
+  | "select"
+  | "checkbox"
+  | "radio"
+  | "file"
+  | "unknown";
+
+export type FieldCategory =
+  | "first_name"
+  | "last_name"
+  | "full_name"
+  | "email"
+  | "phone"
+  | "country"
+  | "state"
+  | "city"
+  | "linkedin"
+  | "github"
+  | "portfolio"
+  | "website"
+  | "resume"
+  | "cover_letter"
+  | "additional_file"
+  | "why_company"
+  | "why_role"
+  | "about_me"
+  | "hard_problem"
+  | "leadership"
+  | "conflict"
+  | "salary"
+  | "relocation"
+  | "work_authorization"
+  | "visa_sponsorship"
+  | "start_date"
+  | "custom_question"
+  | "gender"
+  | "race_ethnicity"
+  | "disability"
+  | "veteran_status"
+  | "age"
+  | "legal_authorization"
+  | "manual_review";
+
+export interface DetectedField {
+  fieldId: string;
+  platform: string;
+  label: string;
+  normalizedLabel: string;
+  fieldType: FieldType;
+  options?: string[];
+  required: boolean;
+  value?: string;
+  isVisible: boolean;
+  isDisabled: boolean;
+  selectorHint: string;
+  category?: FieldCategory;
+  dependsOn?: string[];
+  isDynamic?: boolean;
+}
+
+export interface ExperienceRole {
+  title: string;
+  company: string;
+  duration?: string;
+  location?: string;
+  highlights: string[];
+  technologies: string[];
+}
+
+export interface ExperienceProject {
+  name: string;
+  description: string;
+  technologies: string[];
+  url?: string;
+  highlights?: string[];
+}
+
+export interface ExperienceProfile {
+  id: "default";
+  rawText: string;
+  sourceType: "pasted_text" | "txt" | "pdf" | "docx";
+  parsedAt: string;
+  skills: string[];
+  companies: string[];
+  roles: ExperienceRole[];
+  projects: ExperienceProject[];
+  education: {
+    degree?: string;
+    institution: string;
+    year?: string;
+    details?: string[];
+  }[];
+  certifications: string[];
+  languages: string[];
+  links: string[];
+}
+
+export interface JobFitScore {
+  overallScore: number;
+  breakdown: {
+    requiredSkills: number;
+    experienceLevel: number;
+    domainFit: number;
+    roleFit: number;
+  };
+  missingRequirements: string[];
+  matchingHighlights: string[];
+  recommendation:
+    | "strong_fit"
+    | "good_fit"
+    | "partial_fit"
+    | "low_fit"
+    | "no_fit";
+  reason: string;
+}
+
+export interface UserProfile {
+  id?: "default";
+  firstName?: string;
+  lastName?: string;
+  fullName?: string;
+  email?: string;
+  phone?: string;
+  country?: string;
+  state?: string;
+  city?: string;
+  linkedinUrl?: string;
+  githubUrl?: string;
+  portfolioUrl?: string;
+  websiteUrl?: string;
+  workAuthorization?: string;
+  visaSponsorship?: string;
+  salaryExpectation?: string;
+  startDate?: string;
+}
+
+export type AnswerCategory =
+  | "why_company"
+  | "why_role"
+  | "about_me"
+  | "hard_problem"
+  | "leadership"
+  | "conflict"
+  | "salary"
+  | "relocation"
+  | "work_auth"
+  | "visa_sponsorship"
+  | "portfolio"
+  | "custom";
+
+export interface SavedAnswer {
+  id: string;
+  title: string;
+  category: AnswerCategory;
+  originalQuestion: string;
+  normalizedQuestion: string;
+  answer: string;
+  tags: string[];
+  roleTypes: string[];
+  companiesUsedFor: string[];
+  source: "manual" | "generated_from_cv" | "imported";
+  derivedFromRole?: string;
+  derivedFromProject?: string;
+  isNoFit?: boolean;
+  timesUsed: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnswerSuggestion {
+  questionFieldId: string;
+  source: "answer_bank" | "experience_profile" | "no_fit" | "manual";
+  answer?: string;
+  savedAnswerId?: string;
+  sourceExperience?: string;
+  confidence: number;
+  reason?: string;
+  requiresEditBeforeInsert: boolean;
+}
+
+export interface TrackedJob {
+  id: string;
+  title?: string;
+  company?: string;
+  location?: string;
+  sourceUrl: string;
+  platform: string;
+  status:
+    | "saved"
+    | "scanned"
+    | "applied"
+    | "reached_out"
+    | "interviewing"
+    | "rejected"
+    | "offer"
+    | "skipped";
+  fitScore?: JobFitScore;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type QueuePlatform =
+  | "ashby"
+  | "greenhouse"
+  | "lever"
+  | "workable"
+  | "workday"
+  | "smartrecruiters"
+  | "bamboohr"
+  | "recruitee"
+  | "teamtailor"
+  | "icims"
+  | "custom_careers"
+  | "unknown";
+
+export type QueueStatus =
+  | "new"
+  | "opened"
+  | "scanned"
+  | "saved"
+  | "applied"
+  | "skipped"
+  | "not_relevant"
+  | "manual_review"
+  | "error";
+
+export interface QueuedJobUrl {
+  id: string;
+  url: string;
+  normalizedUrl: string;
+  hostname: string;
+  platform: QueuePlatform;
+  pageType?: PageType;
+  status: QueueStatus;
+  title?: string;
+  company?: string;
+  location?: string;
+  fitScore?: number;
+  fitRecommendation?: JobFitScore["recommendation"];
+  notes?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  openedAt?: string;
+  scannedAt?: string;
+}
+
+export interface ExperienceDatabase {
+  id: "default";
+  markdown: string;
+  sourceFiles: string[];
+  updatedAt: string;
+  generatedWithOpenRouter: boolean;
+}
+
+export interface CvSource {
+  id: string;
+  fileName: string;
+  rawText: string;
+  sourceType: ExperienceProfile["sourceType"];
+  importedAt: string;
+}
+
+export interface Settings {
+  id?: "default";
+  openRouterApiKey?: string;
+  openRouterModel?: string;
+  smartMatchEnabled: boolean;
+  generateFromExperienceEnabled: boolean;
+  jobFitThreshold: number;
+  showDataBeforeSending: boolean;
+  allowRawCvForExtraction: boolean;
+  localOnlyMode: boolean;
+  queueOpenBehavior: "current_tab" | "new_tab" | "background_tab";
+  queueAutoScanAfterOpening: boolean;
+  queueDevMode: boolean;
+  useOptimizedExperienceDatabase: boolean;
+}
+
+export interface ScanHistory {
+  id: string;
+  url: string;
+  pageType: PageType;
+  platform: string;
+  fieldCount: number;
+  jobTitle?: string;
+  scannedAt: string;
+}
+
+export interface ScanResult {
+  context: PageContext;
+  pageType: PageType;
+  platform: string;
+  adapterName: string;
+  jobInfo: JobInfo;
+  fields: DetectedField[];
+  message?: string;
+  watching: boolean;
+}
+
+export interface InsertResult {
+  ok: boolean;
+  error?: string;
+}
+
+export type ContentMessage =
+  | { type: "SCAN_PAGE"; watchDynamicFields: boolean }
+  | { type: "SET_DYNAMIC_WATCH"; enabled: boolean }
+  | { type: "INSERT_FIELD"; fieldId: string; selectorHint: string; value: string }
+  | { type: "GET_FIELD_VALUE"; fieldId: string; selectorHint: string };
+
+export const DEFAULT_SETTINGS: Settings = {
+  id: "default",
+  openRouterModel: "openai/gpt-4o-mini",
+  smartMatchEnabled: false,
+  generateFromExperienceEnabled: false,
+  jobFitThreshold: 70,
+  showDataBeforeSending: true,
+  allowRawCvForExtraction: false,
+  localOnlyMode: true,
+  queueOpenBehavior: "current_tab",
+  queueAutoScanAfterOpening: false,
+  queueDevMode: false,
+  useOptimizedExperienceDatabase: true
+};
+
+export const EMPTY_EXPERIENCE_DATABASE: ExperienceDatabase = {
+  id: "default",
+  markdown: "",
+  sourceFiles: [],
+  updatedAt: "",
+  generatedWithOpenRouter: false
+};
+
+export const EMPTY_EXPERIENCE_PROFILE: ExperienceProfile = {
+  id: "default",
+  rawText: "",
+  sourceType: "pasted_text",
+  parsedAt: "",
+  skills: [],
+  companies: [],
+  roles: [],
+  projects: [],
+  education: [],
+  certifications: [],
+  languages: [],
+  links: []
+};

@@ -1,0 +1,902 @@
+import React from "react";
+import {
+  BriefcaseBusiness,
+  Database,
+  FileQuestion,
+  ListChecks,
+  ScanSearch,
+  Settings as SettingsIcon,
+  UserRound
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { buildOptimizedExperienceDatabase } from "../ai/buildExperienceDatabase";
+import {
+  improveJobExtraction,
+  parseCvWithOpenRouter,
+  smartMatchAnswer,
+  suggestAllAnswersFromExperience
+} from "../ai/openrouter";
+import {
+  clearAllData,
+  db,
+  exportAllData,
+  importAllData,
+  initializeDatabase
+} from "../db";
+import { findRelevantExperience } from "../matching/experienceEvidence";
+import { normalizeText } from "../matching/normalize";
+import { extractTextFromFile, parseExperienceLocally } from "../parsers/resume";
+import { calculateJobFit } from "../scoring/jobFit";
+import {
+  createQueuedJobUrl,
+  normalizeJobUrl,
+  parseUrlsFromText,
+  queueToCsv
+} from "../queue/urlQueue";
+import { EXPERIENCE_QUESTION_CATEGORIES } from "../shared/constants";
+import {
+  DEFAULT_SETTINGS,
+  EMPTY_EXPERIENCE_PROFILE,
+  type AnswerSuggestion,
+  type CvSource,
+  type DetectedField,
+  type ExperienceDatabase,
+  type ExperienceProfile,
+  type JobFitScore,
+  type QueuedJobUrl,
+  type QueueStatus,
+  type SavedAnswer,
+  type ScanResult,
+  type Settings,
+  type TrackedJob,
+  type UserProfile
+} from "../shared/types";
+import { Notice } from "./components/UI";
+import {
+  downloadJson,
+  downloadText,
+  getErrorMessage,
+  insertIntoField,
+  readJsonFile,
+  sendToActiveTab
+} from "./lib";
+import { AnswerBankTab } from "./tabs/AnswerBankTab";
+import { DetectedFieldsTab } from "./tabs/DetectedFieldsTab";
+import { ExperienceProfileTab } from "./tabs/ExperienceProfileTab";
+import { JobsTab } from "./tabs/JobsTab";
+import { JobQueueTab } from "./tabs/JobQueueTab";
+import { ProfileTab } from "./tabs/ProfileTab";
+import { SettingsTab } from "./tabs/SettingsTab";
+
+type TabId = "detected" | "queue" | "answers" | "experience" | "profile" | "jobs" | "settings";
+
+const TABS: Array<{ id: TabId; label: string; icon: LucideIcon }> = [
+  { id: "detected", label: "Detected Fields", icon: ScanSearch },
+  { id: "queue", label: "Job Queue", icon: ListChecks },
+  { id: "answers", label: "Answer Bank", icon: FileQuestion },
+  { id: "experience", label: "Experience", icon: Database },
+  { id: "profile", label: "Profile", icon: UserRound },
+  { id: "jobs", label: "Jobs", icon: BriefcaseBusiness },
+  { id: "settings", label: "Settings", icon: SettingsIcon }
+];
+
+export function App() {
+  const [activeTab, setActiveTab] = React.useState<TabId>("detected");
+  const [experience, setExperience] = React.useState<ExperienceProfile>();
+  const [experienceDatabase, setExperienceDatabase] = React.useState<ExperienceDatabase>();
+  const [cvSources, setCvSources] = React.useState<CvSource[]>([]);
+  const [userProfile, setUserProfile] = React.useState<UserProfile>();
+  const [answers, setAnswers] = React.useState<SavedAnswer[]>([]);
+  const [settings, setSettings] = React.useState<Settings>(DEFAULT_SETTINGS);
+  const [jobs, setJobs] = React.useState<TrackedJob[]>([]);
+  const [queue, setQueue] = React.useState<QueuedJobUrl[]>([]);
+  const [currentQueueId, setCurrentQueueId] = React.useState<string>();
+  const [scan, setScan] = React.useState<ScanResult>();
+  const [fit, setFit] = React.useState<JobFitScore>();
+  const [suggestions, setSuggestions] = React.useState<Record<string, AnswerSuggestion>>({});
+  const [watchDynamic, setWatchDynamic] = React.useState(true);
+  const [loading, setLoading] = React.useState(false);
+  const [notice, setNotice] = React.useState<{ tone: "info" | "success" | "warning" | "danger"; text: string }>();
+
+  const refresh = React.useCallback(async () => {
+    await initializeDatabase();
+    const [nextExperience, nextDatabase, nextCvSources, nextUserProfile, nextAnswers, nextSettings, nextJobs, nextQueue] =
+      await Promise.all([
+      db.experienceProfile.get("default"),
+      db.experienceDatabase.get("default"),
+      db.cvSources.orderBy("importedAt").toArray(),
+      db.userProfile.get("default"),
+      db.savedAnswers.orderBy("updatedAt").reverse().toArray(),
+      db.settings.get("default"),
+      db.trackedJobs.orderBy("updatedAt").reverse().toArray(),
+      db.queuedJobUrls.orderBy("createdAt").toArray()
+    ]);
+    setExperience(nextExperience);
+    setExperienceDatabase(nextDatabase);
+    setCvSources(nextCvSources);
+    setUserProfile(nextUserProfile);
+    setAnswers(nextAnswers);
+    setSettings({ ...DEFAULT_SETTINGS, ...nextSettings });
+    setJobs(nextJobs);
+    setQueue(nextQueue);
+  }, []);
+
+  React.useEffect(() => {
+    refresh().catch((error) => setNotice({ tone: "danger", text: `Local database error: ${getErrorMessage(error)}` }));
+  }, [refresh]);
+
+  React.useEffect(() => {
+    const runtime = typeof chrome !== "undefined" ? chrome.runtime : undefined;
+    if (!runtime?.onMessage) return;
+    const listener = (message: { type?: string; fields?: DetectedField[]; status?: string }) => {
+      if (message.type === "APPLYOS_FIELDS_CHANGED" && message.fields) {
+        setScan((current) => current ? { ...current, fields: message.fields!, watching: true } : current);
+        setNotice({ tone: "info", text: "Dynamic fields changed. The detected field list has been updated." });
+      }
+      if (message.type === "APPLYOS_WATCH_STOPPED") {
+        setScan((current) => current ? { ...current, watching: false } : current);
+        setNotice({ tone: "info", text: message.status || "Dynamic field watch stopped." });
+      }
+    };
+    runtime.onMessage.addListener(listener);
+    return () => runtime.onMessage.removeListener(listener);
+  }, []);
+
+  React.useEffect(() => {
+    if (scan) setFit(calculateJobFit(scan.jobInfo, experience));
+  }, [scan, experience]);
+
+  async function handleScan() {
+    setLoading(true);
+    setNotice(undefined);
+    try {
+      const result = await sendToActiveTab<ScanResult | { error: string }>({
+        type: "SCAN_PAGE",
+        watchDynamicFields: watchDynamic
+      });
+      if ("error" in result) throw new Error(result.error);
+      const nextFit = calculateJobFit(result.jobInfo, experience);
+      setScan(result);
+      setFit(nextFit);
+      setSuggestions({});
+      await db.scanHistory.put({
+        id: crypto.randomUUID(),
+        url: result.context.url,
+        pageType: result.pageType,
+        platform: result.platform,
+        fieldCount: result.fields.length,
+        jobTitle: result.jobInfo.title,
+        scannedAt: new Date().toISOString()
+      });
+      await updateQueueFromScan(result, nextFit);
+      setNotice({ tone: "success", text: `Scanned ${result.fields.length} fields with the ${result.adapterName} adapter.` });
+    } catch (error) {
+      await markCurrentQueueError(getErrorMessage(error));
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleWatchDynamic(value: boolean) {
+    setWatchDynamic(value);
+    try {
+      await sendToActiveTab({ type: "SET_DYNAMIC_WATCH", enabled: value });
+      setScan((current) => current ? { ...current, watching: value } : current);
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function handleInsert(field: DetectedField, value: string, savedAnswerId?: string) {
+    try {
+      const result = await insertIntoField(field, value);
+      if (!result.ok) throw new Error(result.error || "Insertion failed.");
+      if (savedAnswerId) {
+        const answer = await db.savedAnswers.get(savedAnswerId);
+        if (answer) await db.savedAnswers.put({ ...answer, timesUsed: answer.timesUsed + 1, updatedAt: new Date().toISOString() });
+        await refresh();
+      }
+      setNotice({ tone: "success", text: `Inserted a value into “${field.label}”. Review it in the page before continuing.` });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function handleAutofillSafe(fields: DetectedField[]) {
+    let inserted = 0;
+    for (const field of fields) {
+      const value = profileValue(field, userProfile);
+      if (!value) continue;
+      const result = await insertIntoField(field, value);
+      if (result.ok) inserted += 1;
+    }
+    setNotice({ tone: inserted ? "success" : "warning", text: inserted ? `Inserted ${inserted} safe profile fields. Review every value before submitting.` : "No safe profile values could be inserted." });
+  }
+
+  async function handleParseExperience(rawText: string, sourceType: ExperienceProfile["sourceType"]) {
+    setLoading(true);
+    try {
+      let profile = parseExperienceLocally(rawText, sourceType);
+      if (!settings.localOnlyMode && settings.openRouterApiKey && settings.allowRawCvForExtraction) {
+        if (!confirmData("CV text will be sent to OpenRouter for structured extraction.", rawText.slice(0, 2000))) return;
+        const parsed = await parseCvWithOpenRouter(rawText, settings);
+        profile = { ...profile, ...parsed, id: "default", rawText, sourceType, parsedAt: new Date().toISOString() };
+      }
+      await db.experienceProfile.put(profile);
+      await refresh();
+      setNotice({ tone: "success", text: "Experience Profile created. Review and edit the structured data before using it." });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSmartMatch(field: DetectedField, candidates: SavedAnswer[]) {
+    try {
+      if (!confirmData("Only the question and five local answer previews will be sent to OpenRouter.", JSON.stringify({ question: field.label, candidates: candidates.map((item) => ({ id: item.id, title: item.title, preview: item.answer.slice(0, 280) })) }, null, 2))) return;
+      const result = await smartMatchAnswer(field.label, candidates, settings);
+      const answer = candidates.find((candidate) => candidate.id === result.bestMatchId);
+      setSuggestions((current) => ({
+        ...current,
+        [field.fieldId]: {
+          questionFieldId: field.fieldId,
+          source: answer && result.shouldUseSavedAnswer ? "answer_bank" : "manual",
+          answer: answer?.answer,
+          savedAnswerId: answer?.id,
+          confidence: result.confidence,
+          reason: result.reason,
+          requiresEditBeforeInsert: result.confidence < 0.7
+        }
+      }));
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function handleSuggestAllAnswers() {
+    if (!scan || !fit) return;
+    const usingDatabase =
+      settings.useOptimizedExperienceDatabase && Boolean(experienceDatabase?.markdown?.trim());
+    if (!usingDatabase && !experience) {
+      setNotice({ tone: "warning", text: "Add an Experience Profile or enable the optimized CV database." });
+      return;
+    }
+    if (fit.overallScore < settings.jobFitThreshold) {
+      setNotice({
+        tone: "warning",
+        text: "The job fit score is below your threshold. Experience-backed suggestions are disabled."
+      });
+      return;
+    }
+
+    const applicationFields = scan.fields.filter(
+      (field) =>
+        field.category &&
+        EXPERIENCE_QUESTION_CATEGORIES.includes(field.category) &&
+        !field.isDynamic
+    );
+    if (!applicationFields.length) {
+      setNotice({ tone: "warning", text: "No application questions were found on this page." });
+      return;
+    }
+
+    const questions = applicationFields.map((field) => ({
+      fieldId: field.fieldId,
+      label: field.label,
+      category: field.category,
+      relevantExperience: experience
+        ? findRelevantExperience(field.label, experience, scan.jobInfo).snippets
+        : []
+    }));
+
+    if (
+      !confirmData(
+        usingDatabase
+          ? "All application questions, the full optimized multi-CV database, job description, and humanizer prompt will be sent to OpenRouter in one request."
+          : "All application questions, relevant experience snippets, and job summary will be sent to OpenRouter in one request.",
+        JSON.stringify(
+          {
+            questionCount: questions.length,
+            usingOptimizedDatabase: usingDatabase,
+            databaseLength: usingDatabase ? experienceDatabase!.markdown.length : 0,
+            questions: questions.map((question) => ({
+              label: question.label,
+              evidenceCount: question.relevantExperience.length
+            })),
+            job: { title: scan.jobInfo.title, company: scan.jobInfo.company }
+          },
+          null,
+          2
+        )
+      )
+    ) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const results = await suggestAllAnswersFromExperience(
+        questions,
+        experience ?? EMPTY_EXPERIENCE_PROFILE,
+        scan.jobInfo,
+        settings,
+        usingDatabase ? experienceDatabase!.markdown : undefined
+      );
+      const nextSuggestions: Record<string, AnswerSuggestion> = {};
+      for (const result of results) {
+        const isNoFit = result.answer === "NO_FIT";
+        nextSuggestions[result.fieldId] = {
+          questionFieldId: result.fieldId,
+          source: isNoFit ? "no_fit" : "experience_profile",
+          answer: result.answer,
+          sourceExperience: result.sourceExperience,
+          confidence: result.confidence,
+          reason: result.reason,
+          requiresEditBeforeInsert: true
+        };
+      }
+      setSuggestions((current) => ({ ...current, ...nextSuggestions }));
+      setNotice({
+        tone: "success",
+        text: `Generated ${results.length} answers in one batch. Review each before inserting.`
+      });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function importCvSources(files: FileList) {
+    setLoading(true);
+    try {
+      const timestamp = new Date().toISOString();
+      const items: CvSource[] = [];
+      for (const file of Array.from(files)) {
+        const extracted = await extractTextFromFile(file);
+        items.push({
+          id: crypto.randomUUID(),
+          fileName: file.name,
+          rawText: extracted.text,
+          sourceType: extracted.sourceType,
+          importedAt: timestamp
+        });
+      }
+      await db.cvSources.bulkPut(items);
+      await refresh();
+      setNotice({ tone: "success", text: `Imported ${items.length} CV source file(s) locally.` });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function rebuildExperienceDatabase() {
+    if (!cvSources.length) return;
+    if (
+      !confirmData(
+        "All stored CV texts will be sent to OpenRouter to rebuild the optimized markdown database.",
+        JSON.stringify(
+          {
+            sourceFiles: cvSources.map((source) => source.fileName),
+            totalCharacters: cvSources.reduce((sum, source) => sum + source.rawText.length, 0)
+          },
+          null,
+          2
+        )
+      )
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const markdown = await buildOptimizedExperienceDatabase(
+        cvSources.map((source) => ({ fileName: source.fileName, text: source.rawText })),
+        settings
+      );
+      await db.experienceDatabase.put({
+        id: "default",
+        markdown,
+        sourceFiles: cvSources.map((source) => source.fileName),
+        updatedAt: new Date().toISOString(),
+        generatedWithOpenRouter: true
+      });
+      await refresh();
+      setNotice({ tone: "success", text: "Optimized CV database rebuilt. Review the markdown before generating answers." });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveExperienceDatabaseMarkdown(markdown: string) {
+    await db.experienceDatabase.put({
+      id: "default",
+      markdown,
+      sourceFiles: experienceDatabase?.sourceFiles ?? cvSources.map((source) => source.fileName),
+      updatedAt: new Date().toISOString(),
+      generatedWithOpenRouter: experienceDatabase?.generatedWithOpenRouter ?? false
+    });
+    await refresh();
+    setNotice({ tone: "success", text: "Optimized CV database saved locally." });
+  }
+
+  async function importExperienceDatabaseMarkdown(file: File) {
+    try {
+      const markdown = await file.text();
+      await saveExperienceDatabaseMarkdown(markdown);
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  function exportExperienceDatabaseMarkdown() {
+    if (!experienceDatabase?.markdown?.trim()) return;
+    downloadText("applyos-experience-database.md", experienceDatabase.markdown, "text/markdown");
+  }
+
+  async function clearCvSources() {
+    if (!window.confirm("Clear all imported CV source files? The markdown database will be kept.")) return;
+    await db.cvSources.clear();
+    await refresh();
+    setNotice({ tone: "info", text: "CV source files cleared." });
+  }
+
+  async function handleImproveJob() {
+    if (!scan?.jobInfo.description) return;
+    try {
+      if (!confirmData("Only the visible job description will be sent to OpenRouter.", scan.jobInfo.description.slice(0, 2500))) return;
+      const improved = await improveJobExtraction(scan.jobInfo.description, settings);
+      setScan({ ...scan, jobInfo: { ...scan.jobInfo, ...improved } });
+      setNotice({ tone: "success", text: "Job extraction improved. Review the extracted requirements before relying on the fit score." });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function handleSaveCurrentValue(field: DetectedField) {
+    try {
+      const result = await sendToActiveTab<{ ok: boolean; value?: string }>({ type: "GET_FIELD_VALUE", fieldId: field.fieldId, selectorHint: field.selectorHint });
+      if (!result.value?.trim()) throw new Error("The field is empty. Enter an answer in the page first.");
+      const timestamp = new Date().toISOString();
+      await db.savedAnswers.put({
+        id: crypto.randomUUID(),
+        title: field.label.slice(0, 80),
+        category: answerCategory(field.category),
+        originalQuestion: field.label,
+        normalizedQuestion: normalizeText(field.label),
+        answer: result.value,
+        tags: [],
+        roleTypes: [],
+        companiesUsedFor: scan?.jobInfo.company ? [scan.jobInfo.company] : [],
+        source: "manual",
+        timesUsed: 0,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+      await refresh();
+      setNotice({ tone: "success", text: "Saved the current field value to your local Answer Bank." });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function handleSaveSuggestion(field: DetectedField, suggestion: AnswerSuggestion) {
+    if (!suggestion.answer || suggestion.answer === "NO_FIT") return;
+    const edited = window.prompt("Review the answer before saving it", suggestion.answer);
+    if (!edited?.trim()) return;
+    const timestamp = new Date().toISOString();
+    await db.savedAnswers.put({
+      id: crypto.randomUUID(),
+      title: field.label.slice(0, 80),
+      category: answerCategory(field.category),
+      originalQuestion: field.label,
+      normalizedQuestion: normalizeText(field.label),
+      answer: edited,
+      tags: [],
+      roleTypes: [],
+      companiesUsedFor: scan?.jobInfo.company ? [scan.jobInfo.company] : [],
+      source: "generated_from_cv",
+      derivedFromRole: suggestion.sourceExperience,
+      timesUsed: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await refresh();
+    setNotice({ tone: "success", text: "Approved suggestion saved to your local Answer Bank." });
+  }
+
+  function handleSkip(field: DetectedField) {
+    setSuggestions((current) => ({
+      ...current,
+      [field.fieldId]: {
+        questionFieldId: field.fieldId,
+        source: "manual",
+        confidence: 1,
+        reason: "Skipped by user",
+        requiresEditBeforeInsert: false
+      }
+    }));
+  }
+
+  async function saveTrackedJob(status: TrackedJob["status"]) {
+    if (!scan) return;
+    const existing = jobs.find((job) => sameJobUrl(job.sourceUrl, scan.jobInfo.sourceUrl));
+    const timestamp = new Date().toISOString();
+    await db.trackedJobs.put({
+      id: existing?.id ?? crypto.randomUUID(),
+      title: scan.jobInfo.title,
+      company: scan.jobInfo.company,
+      location: scan.jobInfo.location,
+      sourceUrl: scan.jobInfo.sourceUrl,
+      platform: scan.jobInfo.platform,
+      status,
+      fitScore: fit,
+      notes: existing?.notes,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    });
+    await updateMatchingQueueStatus(
+      scan.jobInfo.sourceUrl,
+      status === "saved" ? "saved" : status === "applied" ? "applied" : "skipped"
+    );
+    await refresh();
+    setNotice({ tone: "success", text: `Job marked ${status.replace(/_/g, " ")}.` });
+  }
+
+  function confirmData(summary: string, data: string): boolean {
+    if (!settings.showDataBeforeSending) return true;
+    return window.confirm(`${summary}\n\nPreview:\n${data.slice(0, 3500)}`);
+  }
+
+  async function importExperience(file: File) {
+    try {
+      const data = await readJsonFile(file);
+      await db.experienceProfile.put({ ...EMPTY_EXPERIENCE_PROFILE, ...data, id: "default" } as ExperienceProfile);
+      await refresh();
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function importAnswers(file: File) {
+    try {
+      const data = await readJsonFile(file);
+      const values = Array.isArray(data) ? data : data.savedAnswers;
+      if (!Array.isArray(values)) throw new Error("The file does not contain an answer bank.");
+      await db.savedAnswers.bulkPut(values as SavedAnswer[]);
+      await refresh();
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function importAll(file: File) {
+    try {
+      await importAllData(await readJsonFile(file));
+      await refresh();
+      setNotice({ tone: "success", text: "Local ApplyOS data imported." });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function importQueueText(input: string) {
+    const urls = parseUrlsFromText(input, settings.queueDevMode);
+    if (!urls.length) {
+      setNotice({ tone: "warning", text: "No valid HTTP or HTTPS job URLs were found." });
+      return;
+    }
+    const existing = new Set(queue.map((item) => item.normalizedUrl));
+    const timestamp = new Date().toISOString();
+    const newItems = urls
+      .filter((url) => !existing.has(url))
+      .map((url, index) => createQueuedJobUrl(url, new Date(Date.parse(timestamp) + index).toISOString()));
+    if (!newItems.length) {
+      setNotice({ tone: "info", text: "All detected URLs are already in the queue." });
+      return;
+    }
+    await db.queuedJobUrls.bulkPut(newItems);
+    await refresh();
+    setNotice({ tone: "success", text: `Imported ${newItems.length} unique job URLs. ${urls.length - newItems.length} duplicates were skipped.` });
+  }
+
+  async function openQueueItem(item: QueuedJobUrl) {
+    try {
+      const timestamp = new Date().toISOString();
+      const behavior = settings.queueOpenBehavior;
+      let openedTabId: number | undefined;
+      if (behavior === "current_tab") {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) throw new Error("No active tab is available.");
+        const updated = await chrome.tabs.update(tab.id, { url: item.url });
+        openedTabId = updated.id;
+      } else {
+        const created = await chrome.tabs.create({ url: item.url, active: behavior === "new_tab" });
+        openedTabId = created.id;
+      }
+      const status = ["new", "error"].includes(item.status) ? "opened" : item.status;
+      await db.queuedJobUrls.put({ ...item, status, openedAt: timestamp, updatedAt: timestamp, error: undefined });
+      setCurrentQueueId(item.id);
+      await refresh();
+      if (settings.queueAutoScanAfterOpening && openedTabId !== undefined) {
+        await waitForTabComplete(openedTabId);
+      }
+      setNotice({
+        tone: "info",
+        text: settings.queueAutoScanAfterOpening
+          ? "Page opened. Wait for it to load, then click Scan Page. ApplyOS will not scan silently."
+          : "Page opened. Click Scan Page when you are ready."
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      await db.queuedJobUrls.put({ ...item, status: "error", error: message, updatedAt: new Date().toISOString() });
+      await refresh();
+      setNotice({ tone: "danger", text: message });
+    }
+  }
+
+  async function updateQueueStatus(item: QueuedJobUrl, status: QueueStatus) {
+    const timestamp = new Date().toISOString();
+    await db.queuedJobUrls.put({ ...item, status, updatedAt: timestamp, error: undefined });
+    if (status === "saved" || status === "applied") {
+      const existing = jobs.find((job) => sameJobUrl(job.sourceUrl, item.normalizedUrl));
+      await db.trackedJobs.put({
+        id: existing?.id ?? crypto.randomUUID(),
+        title: item.title,
+        company: item.company,
+        location: item.location,
+        sourceUrl: item.url,
+        platform: item.platform,
+        status,
+        fitScore: scan && sameJobUrl(scan.jobInfo.sourceUrl, item.normalizedUrl) ? fit : existing?.fitScore,
+        notes: item.notes || existing?.notes,
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp
+      });
+    }
+    await refresh();
+    setNotice({ tone: "success", text: `Queue item marked ${status.replace(/_/g, " ")}.` });
+  }
+
+  async function updateQueueNotes(item: QueuedJobUrl, notes: string) {
+    await db.queuedJobUrls.put({ ...item, notes, updatedAt: new Date().toISOString() });
+    await refresh();
+  }
+
+  async function startQueueReview() {
+    const item = queue.find((entry) => ["new", "manual_review"].includes(entry.status)) ?? queue.find(isQueueEligible);
+    if (!item) {
+      setNotice({ tone: "info", text: "There are no queue items left to review." });
+      return;
+    }
+    setCurrentQueueId(item.id);
+    await openQueueItem(item);
+  }
+
+  async function moveQueue(direction: 1 | -1) {
+    if (!queue.length) return;
+    const currentIndex = Math.max(0, queue.findIndex((item) => item.id === currentQueueId));
+    let next: QueuedJobUrl | undefined;
+    for (let index = currentIndex + direction; index >= 0 && index < queue.length; index += direction) {
+      if (isQueueEligible(queue[index])) {
+        next = queue[index];
+        break;
+      }
+    }
+    if (!next) {
+      setNotice({ tone: "info", text: direction > 0 ? "You reached the end of the review queue." : "You reached the beginning of the review queue." });
+      return;
+    }
+    setCurrentQueueId(next.id);
+    await openQueueItem(next);
+  }
+
+  async function importQueueJson(file: File) {
+    try {
+      const data = await readJsonFile(file);
+      const values = Array.isArray(data) ? data : data.queuedJobUrls;
+      if (!Array.isArray(values)) throw new Error("The file does not contain a job URL queue.");
+      const existing = new Set(queue.map((item) => item.normalizedUrl));
+      const items: QueuedJobUrl[] = [];
+      for (const value of values) {
+        if (!value || typeof value !== "object" || !("url" in value) || typeof value.url !== "string") continue;
+        const normalizedUrl = normalizeJobUrl(value.url, settings.queueDevMode);
+        if (existing.has(normalizedUrl)) continue;
+        const base = createQueuedJobUrl(normalizedUrl);
+        items.push({ ...base, ...(value as Partial<QueuedJobUrl>), id: base.id, url: normalizedUrl, normalizedUrl, hostname: new URL(normalizedUrl).hostname });
+        existing.add(normalizedUrl);
+      }
+      await db.queuedJobUrls.bulkPut(items);
+      await refresh();
+      setNotice({ tone: "success", text: `Imported ${items.length} queue items.` });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    }
+  }
+
+  async function updateQueueFromScan(result: ScanResult, nextFit: JobFitScore) {
+    const normalized = safeNormalizeUrl(result.context.url);
+    if (!normalized) return;
+    const item = await db.queuedJobUrls.where("normalizedUrl").equals(normalized).first();
+    if (!item) return;
+    const timestamp = new Date().toISOString();
+    await db.queuedJobUrls.put({
+      ...item,
+      pageType: result.pageType,
+      platform: queuePlatformFromScan(result.platform, item.platform),
+      status: "scanned",
+      title: result.jobInfo.title,
+      company: result.jobInfo.company,
+      location: result.jobInfo.location,
+      fitScore: nextFit.overallScore,
+      fitRecommendation: nextFit.recommendation,
+      scannedAt: timestamp,
+      updatedAt: timestamp,
+      error: undefined
+    });
+    setCurrentQueueId(item.id);
+    await refresh();
+  }
+
+  async function markCurrentQueueError(message: string) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.url) return;
+      const normalized = safeNormalizeUrl(tab.url);
+      if (!normalized) return;
+      const item = await db.queuedJobUrls.where("normalizedUrl").equals(normalized).first();
+      if (!item) return;
+      await db.queuedJobUrls.put({ ...item, status: "error", error: message, updatedAt: new Date().toISOString() });
+      await refresh();
+    } catch {
+      // A scan error should remain the primary message.
+    }
+  }
+
+  async function updateMatchingQueueStatus(url: string, status: QueueStatus) {
+    const normalized = safeNormalizeUrl(url);
+    if (!normalized) return;
+    const item = await db.queuedJobUrls.where("normalizedUrl").equals(normalized).first();
+    if (!item) return;
+    await db.queuedJobUrls.put({ ...item, status, updatedAt: new Date().toISOString(), error: undefined });
+  }
+
+  const tabContent = {
+    detected: <DetectedFieldsTab scan={scan} fit={fit} answers={answers} userProfile={userProfile} settings={settings} suggestions={suggestions} loading={loading} watchDynamic={watchDynamic} onWatchDynamic={handleWatchDynamic} onScan={handleScan} onInsert={handleInsert} onAutofillSafe={handleAutofillSafe} onSaveJob={saveTrackedJob} onSmartMatch={handleSmartMatch} onSuggestAllAnswers={handleSuggestAllAnswers} onSaveCurrentValue={handleSaveCurrentValue} onSaveSuggestion={handleSaveSuggestion} onSkip={handleSkip} onImproveJob={handleImproveJob} />,
+    queue: <JobQueueTab items={queue} settings={settings} currentQueueId={currentQueueId} onImportText={importQueueText} onOpen={openQueueItem} onScan={handleScan} onStatus={updateQueueStatus} onRemove={async (id) => { await db.queuedJobUrls.delete(id); if (currentQueueId === id) setCurrentQueueId(undefined); await refresh(); }} onUpdateNotes={updateQueueNotes} onStartReview={startQueueReview} onNext={() => moveQueue(1)} onPrevious={() => moveQueue(-1)} onClearCompleted={async () => { if (window.confirm("Clear completed queue items?")) { await db.queuedJobUrls.where("status").anyOf(["saved", "applied", "skipped", "not_relevant"]).delete(); await refresh(); } }} onClearQueue={async () => { if (window.confirm("Clear the entire job URL queue?")) { await db.queuedJobUrls.clear(); setCurrentQueueId(undefined); await refresh(); } }} onExportJson={() => downloadJson("applyos-job-queue.json", queue)} onExportCsv={() => downloadText("applyos-job-queue.csv", queueToCsv(queue), "text/csv")} onImportJson={importQueueJson} />,
+    answers: <AnswerBankTab answers={answers} onSave={async (answer) => { await db.savedAnswers.put(answer); await refresh(); }} onDelete={async (id) => { if (window.confirm("Delete this saved answer?")) { await db.savedAnswers.delete(id); await refresh(); } }} onExport={() => downloadJson("applyos-answer-bank.json", answers)} onImport={importAnswers} />,
+    experience: (
+      <ExperienceProfileTab
+        profile={experience}
+        database={experienceDatabase}
+        cvSources={cvSources}
+        settings={settings}
+        loading={loading}
+        onExtractFile={extractTextFromFile}
+        onParse={handleParseExperience}
+        onSave={async (profile) => {
+          await db.experienceProfile.put(profile);
+          await refresh();
+        }}
+        onDelete={async () => {
+          if (window.confirm("Delete your Experience Profile?")) {
+            await db.experienceProfile.delete("default");
+            await refresh();
+          }
+        }}
+        onExport={() => downloadJson("applyos-experience-profile.json", experience ?? EMPTY_EXPERIENCE_PROFILE)}
+        onImport={importExperience}
+        onImportCvs={importCvSources}
+        onBuildDatabase={rebuildExperienceDatabase}
+        onSaveDatabaseMarkdown={saveExperienceDatabaseMarkdown}
+        onImportDatabaseMarkdown={importExperienceDatabaseMarkdown}
+        onExportDatabaseMarkdown={exportExperienceDatabaseMarkdown}
+        onClearCvSources={clearCvSources}
+      />
+    ),
+    profile: <ProfileTab profile={userProfile} onSave={async (profile) => { await db.userProfile.put({ ...profile, id: "default" }); await refresh(); setNotice({ tone: "success", text: "Profile saved locally." }); }} />,
+    jobs: <JobsTab jobs={jobs} onSave={async (job) => { await db.trackedJobs.put(job); await refresh(); }} onDelete={async (id) => { if (window.confirm("Delete this tracked job?")) { await db.trackedJobs.delete(id); await refresh(); } }} />,
+    settings: <SettingsTab settings={settings} onSave={async (value) => { await db.settings.put({ ...value, id: "default" }); await refresh(); setNotice({ tone: "success", text: "Settings saved locally." }); }} onExportAll={async () => downloadJson("applyos-local-backup.json", await exportAllData())} onImportAll={importAll} onClear={async () => { if (window.confirm("Clear all local ApplyOS data? This cannot be undone.")) { await clearAllData(); setScan(undefined); setFit(undefined); setSuggestions({}); await refresh(); } }} />
+  }[activeTab];
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="brand-mark">A</div>
+        <div><strong>ApplyOS</strong><span>Filter first. Assistant second.</span></div>
+        <div className={`privacy-dot ${settings.localOnlyMode ? "is-local" : "is-ai"}`} title={settings.localOnlyMode ? "Local-only mode" : "OpenRouter available"} />
+      </header>
+      <nav className="tabs tabs-seven" aria-label="ApplyOS sections">
+        {TABS.map(({ id, label, icon: Icon }) => <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)} title={label}><Icon size={17} /><span>{label}</span></button>)}
+      </nav>
+      <main>
+        {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
+        {tabContent}
+      </main>
+    </div>
+  );
+}
+
+function safeNormalizeUrl(url: string): string | undefined {
+  try {
+    return normalizeJobUrl(url, true);
+  } catch {
+    return undefined;
+  }
+}
+
+function sameJobUrl(left: string, right: string): boolean {
+  return safeNormalizeUrl(left) === safeNormalizeUrl(right);
+}
+
+function isQueueEligible(item: QueuedJobUrl): boolean {
+  return !["saved", "applied", "skipped", "not_relevant"].includes(item.status);
+}
+
+function queuePlatformFromScan(
+  platform: string,
+  fallback: QueuedJobUrl["platform"]
+): QueuedJobUrl["platform"] {
+  const supported: QueuedJobUrl["platform"][] = [
+    "ashby",
+    "greenhouse",
+    "lever",
+    "workable",
+    "workday",
+    "smartrecruiters",
+    "bamboohr",
+    "recruitee",
+    "teamtailor",
+    "icims",
+    "custom_careers",
+    "unknown"
+  ];
+  return supported.includes(platform as QueuedJobUrl["platform"])
+    ? (platform as QueuedJobUrl["platform"])
+    : fallback === "unknown"
+      ? "unknown"
+      : fallback;
+}
+
+async function waitForTabComplete(tabId: number): Promise<void> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === "complete") return;
+  } catch {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(done, 15_000);
+    function done() {
+      window.clearTimeout(timeout);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    }
+    function listener(updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) {
+      if (updatedTabId === tabId && changeInfo.status === "complete") done();
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+function profileValue(field: DetectedField, profile?: UserProfile): string | undefined {
+  if (!profile) return undefined;
+  const values: Record<string, string | undefined> = {
+    first_name: profile.firstName, last_name: profile.lastName, full_name: profile.fullName,
+    email: profile.email, phone: profile.phone, country: profile.country, state: profile.state,
+    city: profile.city, linkedin: profile.linkedinUrl, github: profile.githubUrl,
+    portfolio: profile.portfolioUrl, website: profile.websiteUrl
+  };
+  return field.category ? values[field.category] : undefined;
+}
+
+function answerCategory(category?: DetectedField["category"]): SavedAnswer["category"] {
+  if (category === "work_authorization") return "work_auth";
+  if (category && ["why_company", "why_role", "about_me", "hard_problem", "leadership", "conflict", "salary", "relocation", "visa_sponsorship", "portfolio"].includes(category)) return category as SavedAnswer["category"];
+  return "custom";
+}

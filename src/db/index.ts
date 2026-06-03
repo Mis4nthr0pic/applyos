@@ -1,0 +1,186 @@
+import Dexie, { type Table } from "dexie";
+import seedExperienceDatabase from "../../data/alex-melo-experience-database.md?raw";
+import {
+  DEFAULT_SETTINGS,
+  EMPTY_EXPERIENCE_DATABASE,
+  type CvSource,
+  type ExperienceDatabase,
+  type ExperienceProfile,
+  type QueuedJobUrl,
+  type SavedAnswer,
+  type ScanHistory,
+  type Settings,
+  type TrackedJob,
+  type UserProfile
+} from "../shared/types";
+import { normalizeText } from "../matching/normalize";
+
+class ApplyOSDatabase extends Dexie {
+  experienceProfile!: Table<ExperienceProfile, string>;
+  experienceDatabase!: Table<ExperienceDatabase, string>;
+  cvSources!: Table<CvSource, string>;
+  userProfile!: Table<UserProfile & { id: "default" }, string>;
+  savedAnswers!: Table<SavedAnswer, string>;
+  settings!: Table<Settings & { id: "default" }, string>;
+  trackedJobs!: Table<TrackedJob, string>;
+  scanHistory!: Table<ScanHistory, string>;
+  queuedJobUrls!: Table<QueuedJobUrl, string>;
+
+  constructor() {
+    super("applyos");
+    this.version(1).stores({
+      experienceProfile: "id, parsedAt",
+      userProfile: "id",
+      savedAnswers: "id, category, source, updatedAt, *tags",
+      settings: "id",
+      trackedJobs: "id, status, company, title, updatedAt",
+      scanHistory: "id, url, pageType, platform, scannedAt"
+    });
+    this.version(2).stores({
+      experienceProfile: "id, parsedAt",
+      userProfile: "id",
+      savedAnswers: "id, category, source, updatedAt, *tags",
+      settings: "id",
+      trackedJobs: "id, status, company, title, updatedAt",
+      scanHistory: "id, url, pageType, platform, scannedAt",
+      queuedJobUrls: "id, &normalizedUrl, status, platform, company, fitScore, createdAt, updatedAt"
+    });
+    this.version(3).stores({
+      experienceProfile: "id, parsedAt",
+      experienceDatabase: "id, updatedAt",
+      cvSources: "id, fileName, importedAt",
+      userProfile: "id",
+      savedAnswers: "id, category, source, updatedAt, *tags",
+      settings: "id",
+      trackedJobs: "id, status, company, title, updatedAt",
+      scanHistory: "id, url, pageType, platform, scannedAt",
+      queuedJobUrls: "id, &normalizedUrl, status, platform, company, fitScore, createdAt, updatedAt"
+    });
+  }
+}
+
+export const db = new ApplyOSDatabase();
+
+const now = () => new Date().toISOString();
+
+const SAMPLE_ANSWERS: SavedAnswer[] = [
+  {
+    id: "sample-why-role",
+    title: "Why this role",
+    category: "why_role",
+    originalQuestion: "Why are you interested in this role?",
+    normalizedQuestion: normalizeText("Why are you interested in this role?"),
+    answer:
+      "Replace this sample with your own documented reason for pursuing a role before inserting it into an application.",
+    tags: ["motivation", "role"],
+    roleTypes: [],
+    companiesUsedFor: [],
+    source: "manual",
+    timesUsed: 0,
+    createdAt: now(),
+    updatedAt: now()
+  },
+  {
+    id: "sample-about-me",
+    title: "Short professional summary",
+    category: "about_me",
+    originalQuestion: "Tell us about yourself.",
+    normalizedQuestion: normalizeText("Tell us about yourself."),
+    answer:
+      "Use this entry as a template only. Replace it with a concise summary grounded in your Experience Profile before inserting it into an application.",
+    tags: ["summary", "introduction"],
+    roleTypes: [],
+    companiesUsedFor: [],
+    source: "manual",
+    timesUsed: 0,
+    createdAt: now(),
+    updatedAt: now()
+  }
+];
+
+export async function initializeDatabase(): Promise<void> {
+  await db.open();
+  const settings = await db.settings.get("default");
+  if (!settings) {
+    await db.settings.put({ ...DEFAULT_SETTINGS, id: "default" });
+  } else {
+    await db.settings.put({ ...DEFAULT_SETTINGS, ...settings, id: "default" });
+  }
+  if ((await db.savedAnswers.count()) === 0) {
+    await db.savedAnswers.bulkPut(SAMPLE_ANSWERS);
+  }
+  const experienceDatabase = await db.experienceDatabase.get("default");
+  if (!experienceDatabase?.markdown?.trim()) {
+    await db.experienceDatabase.put({
+      ...EMPTY_EXPERIENCE_DATABASE,
+      markdown: seedExperienceDatabase.trim(),
+      sourceFiles: [
+        "alex_melo_sec.pdf",
+        "alexandre_melo_cv_26.pdf",
+        "cv_alex_melo_p.pdf",
+        "CV_TAM.pdf",
+        "CVCA.pdf"
+      ],
+      updatedAt: now(),
+      generatedWithOpenRouter: false
+    });
+  }
+}
+
+export async function exportAllData(): Promise<Record<string, unknown>> {
+  return {
+    exportedAt: now(),
+    version: 3,
+    experienceProfile: await db.experienceProfile.toArray(),
+    experienceDatabase: await db.experienceDatabase.toArray(),
+    cvSources: await db.cvSources.toArray(),
+    userProfile: await db.userProfile.toArray(),
+    savedAnswers: await db.savedAnswers.toArray(),
+    settings: await db.settings.toArray(),
+    trackedJobs: await db.trackedJobs.toArray(),
+    scanHistory: await db.scanHistory.toArray(),
+    queuedJobUrls: await db.queuedJobUrls.toArray()
+  };
+}
+
+export async function importAllData(data: Record<string, unknown>): Promise<void> {
+  await db.transaction(
+    "rw",
+    [
+      db.experienceProfile,
+      db.experienceDatabase,
+      db.cvSources,
+      db.userProfile,
+      db.savedAnswers,
+      db.settings,
+      db.trackedJobs,
+      db.scanHistory,
+      db.queuedJobUrls
+    ],
+    async () => {
+      const mappings: Array<[Table<unknown, string>, unknown]> = [
+        [db.experienceProfile as Table<unknown, string>, data.experienceProfile],
+        [db.experienceDatabase as Table<unknown, string>, data.experienceDatabase],
+        [db.cvSources as Table<unknown, string>, data.cvSources],
+        [db.userProfile as Table<unknown, string>, data.userProfile],
+        [db.savedAnswers as Table<unknown, string>, data.savedAnswers],
+        [db.settings as Table<unknown, string>, data.settings],
+        [db.trackedJobs as Table<unknown, string>, data.trackedJobs],
+        [db.scanHistory as Table<unknown, string>, data.scanHistory],
+        [db.queuedJobUrls as Table<unknown, string>, data.queuedJobUrls]
+      ];
+
+      for (const [table, value] of mappings) {
+        if (Array.isArray(value)) {
+          await table.clear();
+          await table.bulkPut(value);
+        }
+      }
+    }
+  );
+}
+
+export async function clearAllData(): Promise<void> {
+  await db.delete();
+  await initializeDatabase();
+}
