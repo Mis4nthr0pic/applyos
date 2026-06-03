@@ -4,6 +4,8 @@ import { normalizeText } from "../matching/normalize";
 import { isAutoSavableField } from "./screeningFields";
 import { DEFAULT_SETTINGS, type DetectedField, type SavedAnswer } from "./types";
 
+import { isUnsafeShortAnswer } from "./answerQuality";
+
 function answerCategory(category?: DetectedField["category"]): SavedAnswer["category"] {
   if (category === "work_authorization" || category === "legal_authorization") return "work_auth";
   if (category === "visa_sponsorship") return "visa_sponsorship";
@@ -32,6 +34,7 @@ export async function saveFieldAnswer(
 
   const trimmed = value.trim();
   if (!trimmed) return "skipped";
+  if (isUnsafeShortAnswer(field, trimmed)) return "skipped";
 
   const existing = await db.savedAnswers.toArray();
   const normalizedQuestion = normalizeText(field.label);

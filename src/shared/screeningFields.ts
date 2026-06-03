@@ -18,7 +18,7 @@ export function looksLikeApplicationQuestion(label: string): boolean {
   if (normalized.length < 8) return false;
   return (
     normalized.includes("?") ||
-    /\b(why|what|how|when|where|which|who|describe|tell us|explain|share|list|provide|reason|looking for|experience|years of|please|motivation|interested|eligible|currently|anything else|additional|comments)\b/.test(
+    /\b(why|what|how|when|where|which|who|describe|tell us|explain|share|list|provide|reason|looking for|experience|years of|please|motivation|interested|eligible|currently|anything else|additional|comments|great at|ideal role|strengths)\b/.test(
       normalized
     )
   );
@@ -45,7 +45,10 @@ export function isAutoSavableField(field: DetectedField): boolean {
   if (field.category && SCREENING_QUESTION_CATEGORIES.includes(field.category)) return true;
   if (field.category && EXPERIENCE_QUESTION_CATEGORIES.includes(field.category)) return true;
   if (
-    (field.fieldType === "textarea" || field.fieldType === "text") &&
+    (field.fieldType === "textarea" ||
+      field.fieldType === "text" ||
+      field.fieldType === "number" ||
+      field.fieldType === "unknown") &&
     looksLikeApplicationQuestion(field.label)
   ) {
     return true;

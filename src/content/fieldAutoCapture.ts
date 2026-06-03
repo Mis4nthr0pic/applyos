@@ -1,6 +1,14 @@
 import { isAutoSavableField, withEffectiveCategory } from "../shared/screeningFields";
 import type { DetectedField } from "../shared/types";
 import {
+  isComboboxInput,
+  isComboboxOptionElement,
+  isIncompleteLocationValue,
+  isVisibleComboboxOption,
+  readComboboxDisplayValue,
+  shouldDeferComboboxCapture
+} from "./combobox";
+import {
   elementBelongsToChoiceField,
   isChoiceCaptureTarget,
   resolveChoiceGroupRoot
@@ -11,33 +19,52 @@ let platform = "generic";
 let debounceTimer: number | undefined;
 const lastCaptured = new Map<string, string>();
 
+const TEXT_DEBOUNCE_MS = 700;
+const COMBOBOX_DEBOUNCE_MS = 1200;
+
 export function startFieldAutoCapture(currentPlatform: string): () => void {
   platform = currentPlatform;
   const handler = (event: Event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (!isCaptureTarget(target)) return;
+    if (!isCaptureTarget(target, event.type)) return;
+
+    if (event.type === "input" && isComboboxInput(target)) {
+      return;
+    }
+
     window.clearTimeout(debounceTimer);
-    debounceTimer = window.setTimeout(() => captureFromElement(target), 600);
+    const delay =
+      event.type === "blur" && isComboboxInput(target)
+        ? 500
+        : isComboboxInput(target) || isComboboxOptionElement(target)
+          ? COMBOBOX_DEBOUNCE_MS
+          : TEXT_DEBOUNCE_MS;
+    debounceTimer = window.setTimeout(() => captureFromElement(target), delay);
   };
+
   document.addEventListener("change", handler, true);
   document.addEventListener("input", handler, true);
+  document.addEventListener("blur", handler, true);
   document.addEventListener("click", handler, true);
   return () => {
     document.removeEventListener("change", handler, true);
     document.removeEventListener("input", handler, true);
+    document.removeEventListener("blur", handler, true);
     document.removeEventListener("click", handler, true);
     window.clearTimeout(debounceTimer);
   };
 }
 
-function isCaptureTarget(element: HTMLElement): boolean {
+function isCaptureTarget(element: HTMLElement, eventType: string): boolean {
   if (isChoiceCaptureTarget(element)) return true;
+  if (isVisibleComboboxOption(element)) return eventType === "click";
+  if (isComboboxInput(element)) return eventType !== "input";
   if (element instanceof HTMLInputElement) {
     return !["hidden", "password", "submit", "button", "reset", "file"].includes(element.type);
   }
   if (element.getAttribute("role") === "option" || element.getAttribute("role") === "listbox") {
-    return true;
+    return eventType === "click";
   }
   return element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || element.isContentEditable;
 }
@@ -53,8 +80,16 @@ function captureFromElement(element: HTMLElement): void {
     resolveChoiceGroupRoot(element) ||
     document.querySelector<HTMLElement>(`[data-applyos-field-id="${CSS.escape(field.fieldId)}"]`) ||
     element;
-  const value = readFieldValue(target);
+
+  let value = readFieldValue(target);
+  if (isComboboxInput(element) || isComboboxOptionElement(element)) {
+    const display = readComboboxDisplayValue(element);
+    if (display) value = display;
+  }
+
   if (!value.trim()) return;
+  if (shouldDeferComboboxCapture(element, savableField.label, value)) return;
+  if (isIncompleteLocationValue(savableField.label, value)) return;
 
   const captureKey = `${savableField.normalizedLabel}:${value}`;
   if (lastCaptured.get(savableField.fieldId) === captureKey) return;

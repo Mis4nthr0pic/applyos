@@ -1,5 +1,6 @@
 import Dexie, { type Table } from "dexie";
 import starterExperienceDatabase from "./starterExperienceDatabase.md?raw";
+import { DEFAULT_JOB_SEARCH_CONTEXT } from "../shared/defaultJobSearchContext";
 import {
   DEFAULT_SETTINGS,
   EMPTY_EXPERIENCE_DATABASE,
@@ -119,7 +120,11 @@ export async function initializeDatabase(): Promise<void> {
   if (!settings) {
     await db.settings.put({ ...DEFAULT_SETTINGS, id: "default" });
   } else {
-    await db.settings.put({ ...DEFAULT_SETTINGS, ...settings, id: "default" });
+    const merged = { ...DEFAULT_SETTINGS, ...settings, id: "default" as const };
+    if (!merged.jobSearchContext?.trim()) {
+      merged.jobSearchContext = DEFAULT_JOB_SEARCH_CONTEXT;
+    }
+    await db.settings.put(merged);
   }
   if ((await db.savedAnswers.count()) === 0) {
     await db.savedAnswers.bulkPut(SAMPLE_ANSWERS);

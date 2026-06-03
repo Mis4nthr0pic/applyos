@@ -89,9 +89,12 @@ async function scanPage(watchDynamicFields: boolean): Promise<ScanResult> {
   stopFieldAutoCapture = startFieldAutoCapture(adapter.id);
 
   const hasApplyButton = context.buttons.some((button) => /\bapply\b/i.test(button));
+  const hasJobOnPage = (context.jobPostingText?.trim().length ?? 0) >= 200;
   const listingNote = extracted.jobInfoFromListing
     ? " Stored job requirements were merged for this role."
-    : "";
+    : hasJobOnPage && fields.length > 0
+      ? " Job description was read from this page."
+      : "";
   const message =
     pageType === "job_listing_page" && fields.length === 0 && hasApplyButton
       ? `Job listing detected. Use Extract Job Info, click Apply manually, then Scan Page for form fields.${listingNote}`

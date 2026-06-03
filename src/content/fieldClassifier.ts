@@ -22,7 +22,7 @@ const RULES: Array<[FieldCategory, RegExp]> = [
     "why_role",
     /\b(why.*(role|position|job)|interest.*(role|position)|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change)\b/
   ],
-  ["about_me", /\b(tell us about yourself|about you|professional summary|introduce yourself)\b/],
+  ["about_me", /\b(tell us about yourself|about you|professional summary|introduce yourself|tell us what you|what you re great|great at|ideal role)\b/],
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation)\b/],
   ["leadership", /\b(leadership|led a team|manage a team|mentored)\b/],
   ["conflict", /\b(conflict|disagreement|difficult colleague)\b/],
@@ -60,16 +60,32 @@ const RULES: Array<[FieldCategory, RegExp]> = [
 
 export function classifyField(label: string, fieldType: string): FieldCategory {
   const normalized = normalizeText(label);
+
+  if (
+    /\blinkedin\b/.test(normalized) &&
+    (label.includes("?") || /\b(reason|change|how many|visa|global markets)\b/i.test(label))
+  ) {
+    for (const [category, pattern] of RULES) {
+      if (["why_role", "custom_question", "why_company", "about_me"].includes(category) && pattern.test(normalized)) {
+        return category;
+      }
+    }
+    return "custom_question";
+  }
+
   for (const [category, pattern] of RULES) {
     if (pattern.test(normalized)) return category;
   }
   if (fieldType === "file") return "additional_file";
   if (fieldType === "radio" || fieldType === "select") return "screening_question";
+  if (fieldType === "number" && /\b(how many|years|months|number of)\b/.test(normalized)) {
+    return "custom_question";
+  }
   if (
     fieldType === "textarea" ||
     fieldType === "text" ||
     normalized.includes("?") ||
-    /\b(why|what|how|when|where|which|describe|tell us|explain|reason|looking for|experience|please|motivation|interested|eligible|currently)\b/.test(
+    /\b(why|what|how|when|where|which|describe|tell us|explain|reason|looking for|experience|please|motivation|interested|eligible|currently|great at|ideal role|strengths)\b/.test(
       normalized
     )
   ) {

@@ -1,6 +1,8 @@
 import { findBestScreeningAnswer, findAnswerMatches } from "../matching/answerMatcher";
-import { SCREENING_QUESTION_CATEGORIES, DOCUMENT_CATEGORIES } from "../shared/constants";
-import { isAutoSavableField, withEffectiveCategory } from "../shared/screeningFields";
+import { isUnsafeShortAnswer } from "../shared/answerQuality";
+import { isApplicationQuestionField } from "../shared/applicationFields";
+import { SCREENING_QUESTION_CATEGORIES, DOCUMENT_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "../shared/constants";
+import { withEffectiveCategory } from "../shared/screeningFields";
 import type { AnswerSuggestion, DetectedField, SavedAnswer, UserProfile } from "../shared/types";
 import { insertIntoField, profileValueForField, sendToActiveTab } from "./lib";
 
@@ -44,6 +46,18 @@ function normalizeOption(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export function formatAnswerForField(field: DetectedField, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "NO_FIT") return trimmed;
+
+  if (field.fieldType === "number" || /\bhow many\b/i.test(field.label)) {
+    const match = trimmed.match(/\b(\d{1,3})\b/);
+    if (match) return match[1];
+  }
+
+  return trimmed;
+}
+
 function valueMatchesFieldOptions(field: DetectedField, value: string): boolean {
   if (!field.options?.length) return true;
   if (field.fieldType !== "radio" && field.fieldType !== "select") return true;
@@ -77,23 +91,32 @@ function resolveInsertValue(
   const resolvedField = withEffectiveCategory(field);
   const suggestion = suggestions?.[field.fieldId];
   if (suggestion?.answer && suggestion.answer !== "NO_FIT") {
-    return { value: suggestion.answer };
+    return { value: formatAnswerForField(field, suggestion.answer) };
   }
 
   const profileValue = profileValueForField(resolvedField, userProfile);
-  if (profileValue) {
+  if (profileValue && !isUnsafeShortAnswer(resolvedField, profileValue)) {
     return { value: profileValue };
   }
 
-  const isScreening =
-    isAutoSavableField(resolvedField) ||
+  if (isApplicationQuestionField(resolvedField)) {
+    const exact = savedAnswers.find(
+      (answer) => answer.normalizedQuestion === resolvedField.normalizedLabel
+    );
+    if (exact && !isUnsafeShortAnswer(resolvedField, exact.answer)) {
+      return { value: exact.answer, savedAnswerId: exact.id };
+    }
+    return undefined;
+  }
+
+  const isScreeningField =
     Boolean(resolvedField.category && SCREENING_QUESTION_CATEGORIES.includes(resolvedField.category)) ||
     resolvedField.fieldType === "radio" ||
     resolvedField.fieldType === "select";
 
-  if (isScreening) {
-    const screeningMatch = findBestScreeningAnswer(resolvedField, savedAnswers, 0.55);
-    if (screeningMatch) {
+  if (isScreeningField) {
+    const screeningMatch = findBestScreeningAnswer(resolvedField, savedAnswers, 0.72);
+    if (screeningMatch && !isUnsafeShortAnswer(resolvedField, screeningMatch.answer.answer)) {
       return {
         value: screeningMatch.answer.answer,
         savedAnswerId: screeningMatch.answer.id
@@ -101,9 +124,17 @@ function resolveInsertValue(
     }
   }
 
+  if (resolvedField.category && SAFE_PROFILE_CATEGORIES.includes(resolvedField.category)) {
+    return undefined;
+  }
+
   const matches = findAnswerMatches(resolvedField, savedAnswers, 1);
   const best = matches[0];
-  if (best && best.confidence >= answerBankMinConfidence) {
+  if (
+    best &&
+    best.confidence >= answerBankMinConfidence &&
+    !isUnsafeShortAnswer(resolvedField, best.answer.answer)
+  ) {
     return { value: best.answer.answer, savedAnswerId: best.answer.id };
   }
 
@@ -149,7 +180,7 @@ export async function autoInsertFields(
       options.suggestions,
       minConfidence
     );
-    if (!resolved?.value.trim()) {
+    if (!resolved?.value.trim() || isUnsafeShortAnswer(field, resolved.value)) {
       result.skipped += 1;
       continue;
     }
@@ -192,4 +223,24 @@ export function autoInsertSummary(result: AutoInsertResult): string | undefined 
     parts.push(`${result.failures.length} could not be filled`);
   }
   return parts.join(" · ");
+}
+
+export async function findUnfilledSuggestedFields(
+  fields: DetectedField[],
+  suggestions: Record<string, AnswerSuggestion>
+): Promise<DetectedField[]> {
+  const unfilled: DetectedField[] = [];
+
+  for (const field of fields) {
+    const suggestion = suggestions[field.fieldId];
+    if (!suggestion?.answer || suggestion.answer === "NO_FIT") continue;
+
+    try {
+      if (await fieldIsEmpty(field)) unfilled.push(field);
+    } catch {
+      unfilled.push(field);
+    }
+  }
+
+  return unfilled;
 }

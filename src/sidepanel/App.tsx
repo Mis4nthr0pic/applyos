@@ -29,7 +29,7 @@ import { mergeWithStoredJobInfo, saveJobListingCache } from "../db/jobListingCac
 import type { ExtractedJobPayload } from "../adapters/extractJob";
 import { isThinJobInfo, jobListingCacheKey } from "../adapters/listingResolver";
 import { findRelevantExperience } from "../matching/experienceEvidence";
-import { getApplicationQuestionFields } from "../shared/applicationFields";
+import { getApplicationQuestionFields, hasApplicationQuestionsForAi } from "../shared/applicationFields";
 import { saveFieldAnswer } from "../shared/saveFieldAnswer";
 import { enrichCvSourceFromCatalog, heuristicCvSummary, recommendCvLocally } from "../matching/recommendCv";
 import type { CvRecommendation } from "../matching/recommendCv";
@@ -69,7 +69,7 @@ import {
   readJsonFile,
   sendToActiveTab
 } from "./lib";
-import { autoInsertFields, autoInsertSummary } from "./autoInsert";
+import { autoInsertFields, autoInsertSummary, findUnfilledSuggestedFields } from "./autoInsert";
 import { AnswerBankTab } from "./tabs/AnswerBankTab";
 import { DetectedFieldsTab } from "./tabs/DetectedFieldsTab";
 import { ExperienceProfileTab } from "./tabs/ExperienceProfileTab";
@@ -268,14 +268,8 @@ export function App() {
     setLoading(true);
     setNotice(undefined);
     const currentSettings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
-    const willAutoGenerate =
-      currentSettings.autoGenerateAnswersOnScan &&
-      !currentSettings.localOnlyMode &&
-      Boolean(currentSettings.openRouterApiKey?.trim());
-    if (willAutoGenerate) {
-      setAiGenerating(true);
-      setAiGeneratingLabel("Scanning page…");
-    }
+    const aiConfigured =
+      !currentSettings.localOnlyMode && Boolean(currentSettings.openRouterApiKey?.trim());
     try {
       const result = await sendToActiveTab<ScanResult | { error: string }>({
         type: "SCAN_PAGE",
@@ -327,11 +321,17 @@ export function App() {
         const insertSummary = insertResult ? autoInsertSummary(insertResult) : undefined;
         if (insertSummary) noticeText += ` ${insertSummary}.`;
       }
-      if (currentSettings.autoGenerateAnswersOnScan) {
+
+      const applicationQuestionCount = getApplicationQuestionFields(nextResult.fields).length;
+      const shouldRunAi =
+        currentSettings.autoGenerateAnswersOnScan && aiConfigured && applicationQuestionCount > 0;
+
+      if (shouldRunAi) {
         try {
-          if (willAutoGenerate) {
-            setAiGeneratingLabel("Preparing application questions for AI…");
-          }
+          setAiGenerating(true);
+          setAiGeneratingLabel(
+            `Drafting answers for ${applicationQuestionCount} question${applicationQuestionCount === 1 ? "" : "s"}…`
+          );
           const generatedNote = await generateApplicationAnswers(nextResult, nextFit, {
             interactive: false,
             existingSuggestions: {}
@@ -343,9 +343,9 @@ export function App() {
           noticeText += ` AI answer generation failed: ${getErrorMessage(error)}`;
         }
       } else if (
-        !currentSettings.localOnlyMode &&
-        currentSettings.openRouterApiKey &&
-        getApplicationQuestionFields(nextResult.fields).length
+        !currentSettings.autoGenerateAnswersOnScan &&
+        aiConfigured &&
+        applicationQuestionCount > 0
       ) {
         noticeText += " Enable Auto-generate AI answers on scan in Settings, or click Generate All Answers.";
       }
@@ -497,6 +497,16 @@ export function App() {
       existingSuggestions?: Record<string, AnswerSuggestion>;
     }
   ): Promise<string | undefined> {
+    if (!hasApplicationQuestionsForAi(scanResult.fields)) {
+      if (options.interactive) {
+        setNotice({
+          tone: "info",
+          text: "This form only has basic profile fields — no custom questions need AI answers."
+        });
+      }
+      return undefined;
+    }
+
     const currentSettings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
 
     if (currentSettings.localOnlyMode || !currentSettings.openRouterApiKey?.trim()) {
@@ -524,10 +534,7 @@ export function App() {
 
     const applicationFields = getApplicationQuestionFields(scanResult.fields);
     if (!applicationFields.length) {
-      if (options.interactive) {
-        setNotice({ tone: "warning", text: "No application questions were found on this page." });
-      }
-      return "AI skipped: no application questions were detected on this page.";
+      return undefined;
     }
 
     const questions = applicationFields.map((field) => ({
@@ -605,7 +612,7 @@ export function App() {
     const mergedSuggestions = { ...(options.existingSuggestions ?? {}), ...nextSuggestions };
     setSuggestions((current) => ({ ...current, ...nextSuggestions }));
 
-    let noticeText = `Generated ${results.length} AI answers and saved them to your Answer Bank.`;
+    let noticeText = `Generated ${results.length} AI answer${results.length === 1 ? "" : "s"} for ${applicationFields.length} question${applicationFields.length === 1 ? "" : "s"} and saved them to your Answer Bank.`;
     if (fitScore.overallScore < currentSettings.jobFitThreshold) {
       noticeText += ` (Job fit is ${fitScore.overallScore}% — below your ${currentSettings.jobFitThreshold}% threshold, but answers were still generated.)`;
     }
@@ -613,6 +620,23 @@ export function App() {
       const insertResult = await runAutoInsert(applicationFields, mergedSuggestions);
       const insertSummary = insertResult ? autoInsertSummary(insertResult) : undefined;
       if (insertSummary) noticeText += ` ${insertSummary}.`;
+
+      const stillEmpty = await findUnfilledSuggestedFields(applicationFields, mergedSuggestions);
+      if (stillEmpty.length) {
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+        const retryResult = await autoInsertFields(stillEmpty, {
+          userProfile: await db.userProfile.get("default"),
+          savedAnswers: await db.savedAnswers.toArray(),
+          suggestions: mergedSuggestions,
+          skipIfFilled: false,
+          onSavedAnswerUsed: markSavedAnswerUsed
+        });
+        const retrySummary = autoInsertSummary(retryResult);
+        if (retrySummary) noticeText += ` Retry: ${retrySummary}.`;
+        if (retryResult.failures.length) {
+          noticeText += ` Could not fill: ${retryResult.failures.map((failure) => failure.label).join("; ")}.`;
+        }
+      }
     }
 
     if (options.interactive) {
@@ -940,9 +964,28 @@ export function App() {
       if (!Array.isArray(values)) throw new Error("The file does not contain an answer bank.");
       await db.savedAnswers.bulkPut(values as SavedAnswer[]);
       await refresh();
+      setNotice({
+        tone: "success",
+        text: `Imported ${values.length} answer${values.length === 1 ? "" : "s"} into your Answer Bank.`
+      });
     } catch (error) {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     }
+  }
+
+  async function clearAllAnswers() {
+    await db.savedAnswers.clear();
+    await refresh();
+    setNotice({ tone: "success", text: "Answer Bank cleared. Scan a form to regenerate answers with AI." });
+  }
+
+  function exportAnswerBank() {
+    downloadJson("applyos-answer-bank.json", {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      count: answers.length,
+      savedAnswers: answers
+    });
   }
 
   async function importAll(file: File) {
@@ -1166,7 +1209,24 @@ export function App() {
       />
     ),
     queue: <JobQueueTab items={queue} settings={settings} currentQueueId={currentQueueId} onImportText={importQueueText} onOpen={openQueueItem} onScan={handleScan} onStatus={updateQueueStatus} onRemove={async (id) => { await db.queuedJobUrls.delete(id); if (currentQueueId === id) setCurrentQueueId(undefined); await refresh(); }} onUpdateNotes={updateQueueNotes} onStartReview={startQueueReview} onNext={() => moveQueue(1)} onPrevious={() => moveQueue(-1)} onClearCompleted={async () => { if (window.confirm("Clear completed queue items?")) { await db.queuedJobUrls.where("status").anyOf(["saved", "applied", "skipped", "not_relevant"]).delete(); await refresh(); } }} onClearQueue={async () => { if (window.confirm("Clear the entire job URL queue?")) { await db.queuedJobUrls.clear(); setCurrentQueueId(undefined); await refresh(); } }} onExportJson={() => downloadJson("applyos-job-queue.json", queue)} onExportCsv={() => downloadText("applyos-job-queue.csv", queueToCsv(queue), "text/csv")} onImportJson={importQueueJson} />,
-    answers: <AnswerBankTab answers={answers} onSave={async (answer) => { await db.savedAnswers.put(answer); await refresh(); }} onDelete={async (id) => { if (window.confirm("Delete this saved answer?")) { await db.savedAnswers.delete(id); await refresh(); } }} onExport={() => downloadJson("applyos-answer-bank.json", answers)} onImport={importAnswers} />,
+    answers: (
+      <AnswerBankTab
+        answers={answers}
+        onSave={async (answer) => {
+          await db.savedAnswers.put(answer);
+          await refresh();
+        }}
+        onDelete={async (id) => {
+          if (window.confirm("Delete this saved answer?")) {
+            await db.savedAnswers.delete(id);
+            await refresh();
+          }
+        }}
+        onClearAll={clearAllAnswers}
+        onExport={exportAnswerBank}
+        onImport={importAnswers}
+      />
+    ),
     experience: (
       <ExperienceProfileTab
         profile={experience}

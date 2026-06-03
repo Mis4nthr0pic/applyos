@@ -1,4 +1,5 @@
 import Fuse, { type FuseResult } from "fuse.js";
+import { isUnsafeShortAnswer } from "../shared/answerQuality";
 import type { DetectedField, FieldCategory, SavedAnswer } from "../shared/types";
 import { normalizeText } from "./normalize";
 
@@ -6,6 +7,23 @@ export interface AnswerMatch {
   answer: SavedAnswer;
   confidence: number;
 }
+
+const TAG_MATCH_CATEGORIES = new Set<FieldCategory>([
+  "gender",
+  "pronouns",
+  "race_ethnicity",
+  "transgender",
+  "disability",
+  "veteran_status",
+  "age",
+  "work_authorization",
+  "legal_authorization",
+  "visa_sponsorship",
+  "timezone",
+  "location_eligibility",
+  "previous_employment",
+  "voluntary_disclosure"
+]);
 
 const SCREENING_LABEL_PATTERNS: Partial<Record<FieldCategory, RegExp>> = {
   gender: /\b(gender identity|gender|sex)\b/i,
@@ -46,11 +64,13 @@ export function findAnswerMatches(
   });
 
   return fuse
-    .search(field.label, { limit })
+    .search(field.label, { limit: limit + 5 })
     .map((result: FuseResult<SavedAnswer>) => ({
       answer: result.item,
       confidence: Math.max(0, Math.min(1, 1 - (result.score ?? 1)))
-    }));
+    }))
+    .filter((match) => !isUnsafeShortAnswer(field, match.answer.answer))
+    .slice(0, limit);
 }
 
 export function hasCloseAnswerMatch(
@@ -98,16 +118,17 @@ export function findBestScreeningAnswer(
   if (!answers.length) return undefined;
 
   const exact = answers.find((answer) => answer.normalizedQuestion === field.normalizedLabel);
-  if (exact) {
+  if (exact && !isUnsafeShortAnswer(field, exact.answer)) {
     return { answer: exact, confidence: 1 };
   }
 
-  if (field.category && field.category !== "screening_question") {
+  if (field.category && TAG_MATCH_CATEGORIES.has(field.category)) {
     const byCategory = answers.filter(
       (answer) =>
-        answer.tags.includes(field.category!) ||
-        questionMatchesCategory(answer.originalQuestion, field.category!) ||
-        questionMatchesCategory(answer.title, field.category!)
+        !isUnsafeShortAnswer(field, answer.answer) &&
+        (answer.tags.includes(field.category!) ||
+          questionMatchesCategory(answer.originalQuestion, field.category!) ||
+          questionMatchesCategory(answer.title, field.category!))
     );
     if (byCategory.length) {
       return { answer: pickPreferredAnswer(byCategory), confidence: 0.92 };
@@ -122,6 +143,7 @@ export function findBestScreeningAnswer(
   if (field.category === "screening_question") {
     const labelTokens = normalizeText(field.label).split(/\s+/).filter((token) => token.length > 3);
     const tokenMatches = answers.filter((answer) => {
+      if (isUnsafeShortAnswer(field, answer.answer)) return false;
       const corpus = normalizeText(`${answer.title} ${answer.originalQuestion}`);
       return labelTokens.filter((token) => corpus.includes(token)).length >= Math.min(2, labelTokens.length);
     });
