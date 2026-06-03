@@ -34,3 +34,14 @@ export function uniqueStrings(values: string[]): string[] {
     return true;
   });
 }
+
+export function optionMatches(left: string, right: string): boolean {
+  const a = normalizeText(left);
+  const b = normalizeText(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length > 12 && b.length > 12) {
+    return a.includes(b) || b.includes(a);
+  }
+  return false;
+}

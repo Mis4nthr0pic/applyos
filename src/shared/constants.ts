@@ -65,6 +65,7 @@ export const SCREENING_QUESTION_CATEGORIES: FieldCategory[] = [
   "legal_authorization",
   "screening_question",
   "gender",
+  "pronouns",
   "race_ethnicity",
   "disability",
   "veteran_status",
@@ -81,6 +82,7 @@ export const DOCUMENT_CATEGORIES: FieldCategory[] = [
 
 export const SENSITIVE_CATEGORIES: FieldCategory[] = [
   "gender",
+  "pronouns",
   "race_ethnicity",
   "disability",
   "veteran_status",

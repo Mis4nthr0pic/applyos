@@ -1,5 +1,5 @@
 import type { CvSource, JobInfo } from "../shared/types";
-import { findCatalogEntry, inferCatalogFileName } from "../shared/cvCatalog";
+import { findCatalogEntry } from "../shared/cvCatalog";
 
 export interface CvRecommendationAlternative {
   fileName: string;
@@ -114,13 +114,11 @@ export function recommendCvLocally(job: JobInfo, cvSources: CvSource[]): CvRecom
 }
 
 export function enrichCvSourceFromCatalog(fileName: string): Partial<CvSource> {
-  const canonical = inferCatalogFileName(fileName);
-  const entry = findCatalogEntry(canonical);
+  const entry = findCatalogEntry(fileName);
   if (!entry) {
-    return { fileName: canonical };
+    return {};
   }
   return {
-    fileName: entry.fileName,
     positioningLabel: entry.positioningLabel,
     summary: entry.summary,
     targetRoles: entry.targetRoles,

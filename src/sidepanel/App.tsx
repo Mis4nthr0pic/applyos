@@ -29,7 +29,8 @@ import { mergeWithStoredJobInfo, saveJobListingCache } from "../db/jobListingCac
 import type { ExtractedJobPayload } from "../adapters/extractJob";
 import { isThinJobInfo, jobListingCacheKey } from "../adapters/listingResolver";
 import { findRelevantExperience } from "../matching/experienceEvidence";
-import { hasCloseAnswerMatch, hasExactSavedAnswer } from "../matching/answerMatcher";
+import { getApplicationQuestionFields } from "../shared/applicationFields";
+import { saveFieldAnswer } from "../shared/saveFieldAnswer";
 import { enrichCvSourceFromCatalog, heuristicCvSummary, recommendCvLocally } from "../matching/recommendCv";
 import type { CvRecommendation } from "../matching/recommendCv";
 import { normalizeText } from "../matching/normalize";
@@ -59,7 +60,7 @@ import {
   type TrackedJob,
   type UserProfile
 } from "../shared/types";
-import { Notice } from "./components/UI";
+import { Notice, LoadingPanel } from "./components/UI";
 import {
   downloadJson,
   downloadText,
@@ -68,6 +69,7 @@ import {
   readJsonFile,
   sendToActiveTab
 } from "./lib";
+import { autoInsertFields, autoInsertSummary } from "./autoInsert";
 import { AnswerBankTab } from "./tabs/AnswerBankTab";
 import { DetectedFieldsTab } from "./tabs/DetectedFieldsTab";
 import { ExperienceProfileTab } from "./tabs/ExperienceProfileTab";
@@ -105,7 +107,27 @@ export function App() {
   const [suggestions, setSuggestions] = React.useState<Record<string, AnswerSuggestion>>({});
   const [watchDynamic, setWatchDynamic] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
+  const [aiGenerating, setAiGenerating] = React.useState(false);
+  const [aiGeneratingLabel, setAiGeneratingLabel] = React.useState<string>();
   const [notice, setNotice] = React.useState<{ tone: "info" | "success" | "warning" | "danger"; text: string }>();
+
+  const settingsRef = React.useRef(settings);
+  const userProfileRef = React.useRef(userProfile);
+  const answersRef = React.useRef(answers);
+  const suggestionsRef = React.useRef(suggestions);
+
+  React.useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+  React.useEffect(() => {
+    userProfileRef.current = userProfile;
+  }, [userProfile]);
+  React.useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+  React.useEffect(() => {
+    suggestionsRef.current = suggestions;
+  }, [suggestions]);
 
   const refresh = React.useCallback(async () => {
     await initializeDatabase();
@@ -130,6 +152,59 @@ export function App() {
     setQueue(nextQueue);
   }, []);
 
+  const markSavedAnswerUsed = React.useCallback(async (savedAnswerId: string) => {
+    const answer = await db.savedAnswers.get(savedAnswerId);
+    if (!answer) return;
+    await db.savedAnswers.put({
+      ...answer,
+      timesUsed: answer.timesUsed + 1,
+      updatedAt: new Date().toISOString()
+    });
+    await refresh();
+  }, [refresh]);
+
+  const runAutoInsert = React.useCallback(
+    async (fields: DetectedField[], nextSuggestions?: Record<string, AnswerSuggestion>) => {
+      if (!settingsRef.current.autoInsertFields || !fields.length) return undefined;
+
+      await initializeDatabase();
+      const [latestProfile, latestAnswers] = await Promise.all([
+        db.userProfile.get("default"),
+        db.savedAnswers.toArray()
+      ]);
+
+      const firstPass = await autoInsertFields(fields, {
+        userProfile: latestProfile,
+        savedAnswers: latestAnswers,
+        suggestions: nextSuggestions ?? suggestionsRef.current,
+        onSavedAnswerUsed: markSavedAnswerUsed
+      });
+
+      const choiceFields = fields.filter(
+        (field) =>
+          (field.fieldType === "radio" || field.fieldType === "select") &&
+          firstPass.failures.some((failure) => failure.label === field.label)
+      );
+      if (!choiceFields.length) return firstPass;
+
+      await new Promise((resolve) => window.setTimeout(resolve, 600));
+
+      const retryPass = await autoInsertFields(choiceFields, {
+        userProfile: latestProfile,
+        savedAnswers: latestAnswers,
+        suggestions: nextSuggestions ?? suggestionsRef.current,
+        onSavedAnswerUsed: markSavedAnswerUsed
+      });
+
+      return {
+        inserted: firstPass.inserted + retryPass.inserted,
+        skipped: firstPass.skipped,
+        failures: retryPass.failures
+      };
+    },
+    [markSavedAnswerUsed]
+  );
+
   React.useEffect(() => {
     refresh().catch((error) => setNotice({ tone: "danger", text: `Local database error: ${getErrorMessage(error)}` }));
   }, [refresh]);
@@ -145,8 +220,23 @@ export function App() {
       value?: string;
     }) => {
       if (message.type === "APPLYOS_FIELDS_CHANGED" && message.fields) {
-        setScan((current) => current ? { ...current, fields: message.fields!, watching: true } : current);
-        setNotice({ tone: "info", text: "Dynamic fields changed. The detected field list has been updated." });
+        setScan((current) => (current ? { ...current, fields: message.fields!, watching: true } : current));
+        const dynamicFields = message.fields.filter((field) => field.isDynamic);
+        if (dynamicFields.length && settingsRef.current.autoInsertFields) {
+          runAutoInsert(dynamicFields)
+            .then((insertResult) => {
+              const summary = insertResult ? autoInsertSummary(insertResult) : undefined;
+              setNotice({
+                tone: "info",
+                text: summary
+                  ? `Dynamic fields changed. ${summary}.`
+                  : "Dynamic fields changed. The detected field list has been updated."
+              });
+            })
+            .catch((error) => setNotice({ tone: "danger", text: getErrorMessage(error) }));
+        } else {
+          setNotice({ tone: "info", text: "Dynamic fields changed. The detected field list has been updated." });
+        }
       }
       if (message.type === "APPLYOS_WATCH_STOPPED") {
         setScan((current) => current ? { ...current, watching: false } : current);
@@ -160,7 +250,7 @@ export function App() {
     };
     runtime.onMessage.addListener(listener);
     return () => runtime.onMessage.removeListener(listener);
-  }, []);
+  }, [runAutoInsert]);
 
   React.useEffect(() => {
     if (scan) setFit(calculateJobFit(scan.jobInfo, experience));
@@ -177,6 +267,15 @@ export function App() {
   async function handleScan() {
     setLoading(true);
     setNotice(undefined);
+    const currentSettings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
+    const willAutoGenerate =
+      currentSettings.autoGenerateAnswersOnScan &&
+      !currentSettings.localOnlyMode &&
+      Boolean(currentSettings.openRouterApiKey?.trim());
+    if (willAutoGenerate) {
+      setAiGenerating(true);
+      setAiGeneratingLabel("Scanning page…");
+    }
     try {
       const result = await sendToActiveTab<ScanResult | { error: string }>({
         type: "SCAN_PAGE",
@@ -222,15 +321,45 @@ export function App() {
       });
       await updateQueueFromScan(nextResult, nextFit);
       const extractedNote = nextResult.jobInfoExtracted ? " Stored job info is attached for the model." : "";
+      let noticeText = `Scanned ${nextResult.fields.length} fields with the ${nextResult.adapterName} adapter.${extractedNote}`;
+      if (settings.autoInsertFields && nextResult.fields.length) {
+        const insertResult = await runAutoInsert(nextResult.fields);
+        const insertSummary = insertResult ? autoInsertSummary(insertResult) : undefined;
+        if (insertSummary) noticeText += ` ${insertSummary}.`;
+      }
+      if (currentSettings.autoGenerateAnswersOnScan) {
+        try {
+          if (willAutoGenerate) {
+            setAiGeneratingLabel("Preparing application questions for AI…");
+          }
+          const generatedNote = await generateApplicationAnswers(nextResult, nextFit, {
+            interactive: false,
+            existingSuggestions: {}
+          });
+          if (generatedNote) {
+            noticeText += generatedNote.startsWith("AI skipped") ? ` ${generatedNote}` : ` ${generatedNote}`;
+          }
+        } catch (error) {
+          noticeText += ` AI answer generation failed: ${getErrorMessage(error)}`;
+        }
+      } else if (
+        !currentSettings.localOnlyMode &&
+        currentSettings.openRouterApiKey &&
+        getApplicationQuestionFields(nextResult.fields).length
+      ) {
+        noticeText += " Enable Auto-generate AI answers on scan in Settings, or click Generate All Answers.";
+      }
       setNotice({
-        tone: "success",
-        text: `Scanned ${nextResult.fields.length} fields with the ${nextResult.adapterName} adapter.${extractedNote}`
+        tone: noticeText.includes("AI skipped") || noticeText.includes("failed") ? "warning" : "success",
+        text: noticeText
       });
     } catch (error) {
       await markCurrentQueueError(getErrorMessage(error));
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     } finally {
       setLoading(false);
+      setAiGenerating(false);
+      setAiGeneratingLabel(undefined);
     }
   }
 
@@ -307,14 +436,16 @@ export function App() {
   }
 
   async function handleAutofillSafe(fields: DetectedField[]) {
-    let inserted = 0;
-    for (const field of fields) {
-      const value = profileValue(field, userProfile);
-      if (!value) continue;
-      const result = await insertIntoField(field, value);
-      if (result.ok) inserted += 1;
-    }
-    setNotice({ tone: inserted ? "success" : "warning", text: inserted ? `Inserted ${inserted} safe profile fields. Review every value before submitting.` : "No safe profile values could be inserted." });
+    const result = await autoInsertFields(fields, {
+      userProfile,
+      savedAnswers: answers,
+      onSavedAnswerUsed: markSavedAnswerUsed
+    });
+    const summary = autoInsertSummary(result);
+    setNotice({
+      tone: result.inserted ? "success" : "warning",
+      text: summary ?? "No safe profile values could be inserted."
+    });
   }
 
   async function handleParseExperience(rawText: string, sourceType: ExperienceProfile["sourceType"]) {
@@ -358,31 +489,45 @@ export function App() {
     }
   }
 
-  async function handleSuggestAllAnswers() {
-    if (!scan || !fit) return;
-    const usingDatabase =
-      settings.useOptimizedExperienceDatabase && Boolean(experienceDatabase?.markdown?.trim());
-    if (!usingDatabase && !experience) {
-      setNotice({ tone: "warning", text: "Add an Experience Profile or enable the optimized CV database." });
-      return;
+  async function generateApplicationAnswers(
+    scanResult: ScanResult,
+    fitScore: JobFitScore,
+    options: {
+      interactive: boolean;
+      existingSuggestions?: Record<string, AnswerSuggestion>;
     }
-    if (fit.overallScore < settings.jobFitThreshold) {
-      setNotice({
-        tone: "warning",
-        text: "The job fit score is below your threshold. Experience-backed suggestions are disabled."
-      });
-      return;
+  ): Promise<string | undefined> {
+    const currentSettings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
+
+    if (currentSettings.localOnlyMode || !currentSettings.openRouterApiKey?.trim()) {
+      if (options.interactive) {
+        setNotice({
+          tone: "warning",
+          text: "Turn off Local-only mode and add an OpenRouter API key in Settings, then click Save Settings."
+        });
+      }
+      return "AI skipped: turn off Local-only mode and save your OpenRouter API key in Settings.";
     }
 
-    const applicationFields = scan.fields.filter(
-      (field) =>
-        field.category &&
-        EXPERIENCE_QUESTION_CATEGORIES.includes(field.category) &&
-        !field.isDynamic
-    );
+    const usingDatabase =
+      currentSettings.useOptimizedExperienceDatabase &&
+      Boolean(experienceDatabase?.markdown?.trim());
+    if (!usingDatabase && !experience) {
+      if (options.interactive) {
+        setNotice({
+          tone: "warning",
+          text: "Add an Experience Profile or import CVs and build the optimized database in Experience."
+        });
+      }
+      return "AI skipped: add experience data in the Experience tab (CV library or optimized database).";
+    }
+
+    const applicationFields = getApplicationQuestionFields(scanResult.fields);
     if (!applicationFields.length) {
-      setNotice({ tone: "warning", text: "No application questions were found on this page." });
-      return;
+      if (options.interactive) {
+        setNotice({ tone: "warning", text: "No application questions were found on this page." });
+      }
+      return "AI skipped: no application questions were detected on this page.";
     }
 
     const questions = applicationFields.map((field) => ({
@@ -390,11 +535,13 @@ export function App() {
       label: field.label,
       category: field.category,
       relevantExperience: experience
-        ? findRelevantExperience(field.label, experience, scan.jobInfo).snippets
+        ? findRelevantExperience(field.label, experience, scanResult.jobInfo).snippets
         : []
     }));
 
     if (
+      options.interactive &&
+      currentSettings.showDataBeforeSending &&
       !confirmData(
         usingDatabase
           ? "All application questions, the full optimized multi-CV database, job description, and humanizer prompt will be sent to OpenRouter in one request."
@@ -403,48 +550,86 @@ export function App() {
           {
             questionCount: questions.length,
             usingOptimizedDatabase: usingDatabase,
-            databaseLength: usingDatabase ? experienceDatabase!.markdown.length : 0,
-            questions: questions.map((question) => ({
-              label: question.label,
-              evidenceCount: question.relevantExperience.length
-            })),
-            job: { title: scan.jobInfo.title, company: scan.jobInfo.company }
+            questions: questions.map((question) => question.label),
+            job: { title: scanResult.jobInfo.title, company: scanResult.jobInfo.company },
+            fitScore: fitScore.overallScore,
+            fitThreshold: currentSettings.jobFitThreshold
           },
           null,
           2
         )
       )
     ) {
-      return;
+      return undefined;
     }
 
-    setLoading(true);
+    setAiGenerating(true);
+    setAiGeneratingLabel(
+      `Drafting answers for ${questions.length} question${questions.length === 1 ? "" : "s"}…`
+    );
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
     try {
       const results = await suggestAllAnswersFromExperience(
         questions,
         experience ?? EMPTY_EXPERIENCE_PROFILE,
-        scan.jobInfo,
-        settings,
+        scanResult.jobInfo,
+        currentSettings,
         usingDatabase ? experienceDatabase!.markdown : undefined
       );
-      const nextSuggestions: Record<string, AnswerSuggestion> = {};
-      for (const result of results) {
-        const isNoFit = result.answer === "NO_FIT";
-        nextSuggestions[result.fieldId] = {
-          questionFieldId: result.fieldId,
-          source: isNoFit ? "no_fit" : "experience_profile",
-          answer: result.answer,
-          sourceExperience: result.sourceExperience,
-          confidence: result.confidence,
-          reason: result.reason,
-          requiresEditBeforeInsert: true
-        };
+
+    const nextSuggestions: Record<string, AnswerSuggestion> = {};
+    for (const result of results) {
+      const isNoFit = result.answer === "NO_FIT";
+      nextSuggestions[result.fieldId] = {
+        questionFieldId: result.fieldId,
+        source: isNoFit ? "no_fit" : "experience_profile",
+        answer: result.answer,
+        sourceExperience: result.sourceExperience,
+        confidence: result.confidence,
+        reason: result.reason,
+        requiresEditBeforeInsert: true
+      };
+
+      if (!isNoFit && result.answer?.trim()) {
+        const field = applicationFields.find((item) => item.fieldId === result.fieldId);
+        if (field) {
+          await saveFieldAnswer(field, result.answer, scanResult.jobInfo.company, {
+            source: "generated_from_cv"
+          });
+        }
       }
-      setSuggestions((current) => ({ ...current, ...nextSuggestions }));
-      setNotice({
-        tone: "success",
-        text: `Generated ${results.length} answers in one batch. Review each before inserting.`
-      });
+    }
+
+    await refresh();
+    const mergedSuggestions = { ...(options.existingSuggestions ?? {}), ...nextSuggestions };
+    setSuggestions((current) => ({ ...current, ...nextSuggestions }));
+
+    let noticeText = `Generated ${results.length} AI answers and saved them to your Answer Bank.`;
+    if (fitScore.overallScore < currentSettings.jobFitThreshold) {
+      noticeText += ` (Job fit is ${fitScore.overallScore}% — below your ${currentSettings.jobFitThreshold}% threshold, but answers were still generated.)`;
+    }
+    if (currentSettings.autoInsertFields) {
+      const insertResult = await runAutoInsert(applicationFields, mergedSuggestions);
+      const insertSummary = insertResult ? autoInsertSummary(insertResult) : undefined;
+      if (insertSummary) noticeText += ` ${insertSummary}.`;
+    }
+
+    if (options.interactive) {
+      setNotice({ tone: "success", text: noticeText });
+    }
+    return noticeText;
+    } finally {
+      setAiGenerating(false);
+      setAiGeneratingLabel(undefined);
+    }
+  }
+
+  async function handleSuggestAllAnswers() {
+    if (!scan || !fit) return;
+    setLoading(true);
+    try {
+      await generateApplicationAnswers(scan, fit, { interactive: true, existingSuggestions: suggestions });
     } catch (error) {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     } finally {
@@ -461,9 +646,9 @@ export function App() {
 
       for (const file of Array.from(files)) {
         const extracted = await extractTextFromFile(file);
-        const catalogFields = enrichCvSourceFromCatalog(file.name);
-        const heuristicFields = heuristicCvSummary(extracted.text, file.name);
-        const fileName = catalogFields.fileName || file.name;
+        const fileName = file.name;
+        const catalogFields = enrichCvSourceFromCatalog(fileName);
+        const heuristicFields = heuristicCvSummary(extracted.text, fileName);
         const prior = existing.find((source) => source.fileName.toLowerCase() === fileName.toLowerCase());
 
         items.push({
@@ -631,34 +816,15 @@ export function App() {
   }
 
   async function handleAutoSaveFieldAnswer(field: DetectedField, value: string) {
-    const currentSettings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
-    if (!currentSettings.autoSaveNewAnswers) return;
-
-    const existing = await db.savedAnswers.toArray();
-    if (hasCloseAnswerMatch(field, existing) || hasExactSavedAnswer(existing, normalizeText(field.label), value)) {
-      return;
-    }
-
-    const timestamp = new Date().toISOString();
-    await db.savedAnswers.put({
-      id: crypto.randomUUID(),
-      title: field.label.slice(0, 80),
-      category: answerCategory(field.category),
-      originalQuestion: field.label,
-      normalizedQuestion: normalizeText(field.label),
-      answer: value,
-      tags: ["auto_saved"],
-      roleTypes: [],
-      companiesUsedFor: scan?.jobInfo.company ? [scan.jobInfo.company] : [],
-      source: "manual",
-      timesUsed: 0,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
+    const result = await saveFieldAnswer(field, value, scan?.jobInfo.company);
+    if (result === "skipped") return;
     await refresh();
     setNotice({
       tone: "success",
-      text: `Saved "${value}" for a screening question to your Answer Bank.`
+      text:
+        result === "updated"
+          ? `Updated saved answer for “${field.label}”.`
+          : `Saved “${value}” for “${field.label}” to your Answer Bank.`
     });
   }
 
@@ -981,7 +1147,8 @@ export function App() {
         userProfile={userProfile}
         settings={settings}
         suggestions={suggestions}
-        loading={loading}
+        loading={loading || aiGenerating}
+        aiGenerating={aiGenerating}
         watchDynamic={watchDynamic}
         onWatchDynamic={handleWatchDynamic}
         onScan={handleScan}
@@ -1047,6 +1214,12 @@ export function App() {
         {TABS.map(({ id, label, icon: Icon }) => <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)} title={label}><Icon size={17} /><span>{label}</span></button>)}
       </nav>
       <main>
+        {aiGenerating ? (
+          <LoadingPanel
+            label={aiGeneratingLabel ?? "AI is thinking…"}
+            detail="OpenRouter is drafting answers from your experience. This usually takes 10–30 seconds."
+          />
+        ) : null}
         {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
         {tabContent}
       </main>
@@ -1114,17 +1287,6 @@ async function waitForTabComplete(tabId: number): Promise<void> {
     }
     chrome.tabs.onUpdated.addListener(listener);
   });
-}
-
-function profileValue(field: DetectedField, profile?: UserProfile): string | undefined {
-  if (!profile) return undefined;
-  const values: Record<string, string | undefined> = {
-    first_name: profile.firstName, last_name: profile.lastName, full_name: profile.fullName,
-    email: profile.email, phone: profile.phone, country: profile.country, state: profile.state,
-    city: profile.city, linkedin: profile.linkedinUrl, github: profile.githubUrl,
-    portfolio: profile.portfolioUrl, website: profile.websiteUrl
-  };
-  return field.category ? values[field.category] : undefined;
 }
 
 function answerCategory(category?: DetectedField["category"]): SavedAnswer["category"] {

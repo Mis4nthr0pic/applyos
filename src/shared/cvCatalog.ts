@@ -80,9 +80,20 @@ export function findCatalogEntry(fileName: string): CvCatalogEntry | undefined {
   const normalized = normalizeCvFileName(fileName);
   const aliased = CV_CATALOG_ALIASES[normalized];
   if (aliased) {
-    return CV_CATALOG.find((entry) => normalizeCvFileName(entry.fileName) === aliased);
+    return CV_CATALOG.find((entry) => normalizeCvFileName(entry.fileName) === normalizeCvFileName(aliased));
   }
   return CV_CATALOG.find((entry) => normalizeCvFileName(entry.fileName) === normalized);
+}
+
+/** Map a catalog canonical name back to the imported filename when we know the alias. */
+export function restoreImportedFileName(fileName: string): string {
+  const normalized = normalizeCvFileName(fileName);
+  for (const [original, canonical] of Object.entries(CV_CATALOG_ALIASES)) {
+    if (normalizeCvFileName(canonical) === normalized) {
+      return original;
+    }
+  }
+  return fileName;
 }
 
 export function catalogEntryToCvFields(
@@ -102,13 +113,6 @@ export function catalogEntryToCvFields(
 }
 
 export function inferCatalogFileName(fileName: string): string {
-  const direct = findCatalogEntry(fileName);
-  if (direct) return direct.fileName;
-
-  const base = fileName.replace(/\.(txt|pdf|docx)$/i, "").toLowerCase();
-  const alias = CV_CATALOG.find((entry) => {
-    const catalogBase = entry.fileName.replace(/\.pdf$/i, "").toLowerCase();
-    return base === catalogBase || base.includes(catalogBase) || catalogBase.includes(base);
-  });
-  return alias?.fileName ?? fileName;
+  const entry = findCatalogEntry(fileName);
+  return entry?.fileName ?? fileName;
 }

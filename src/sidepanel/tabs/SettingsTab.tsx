@@ -19,7 +19,7 @@ export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClea
       <div className="section-heading"><div><h1>Settings</h1><p>External AI is optional, disabled by default, and always user-triggered.</p></div></div>
       <Card className="form-grid">
         <Notice tone="success">Local-only mode keeps CV text, profiles, answers, jobs, queued URLs, and scans on this device. ApplyOS has no backend and no telemetry.</Notice>
-        <Toggle label="Local-only mode" checked={draft.localOnlyMode} onChange={(value) => setDraft({ ...draft, localOnlyMode: value })} />
+        <Toggle label="Local-only mode" checked={draft.localOnlyMode} onChange={(value) => setDraft({ ...draft, localOnlyMode: value })} hint="Must be OFF for OpenRouter AI answers. Click Save Settings after changing." />
         <Field label="OpenRouter API key" hint="Stored locally. No hardcoded secrets."><input type="password" value={draft.openRouterApiKey ?? ""} onChange={(e) => setDraft({ ...draft, openRouterApiKey: e.target.value })} /></Field>
         <OpenRouterModelField
           model={draft.openRouterModel}
@@ -29,6 +29,8 @@ export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClea
         <Toggle label="Auto-generate from Experience Profile" checked={draft.generateFromExperienceEnabled} onChange={(value) => setDraft({ ...draft, generateFromExperienceEnabled: value })} />
         <Toggle label="Use optimized multi-CV database for answers" checked={draft.useOptimizedExperienceDatabase} onChange={(value) => setDraft({ ...draft, useOptimizedExperienceDatabase: value })} hint="When enabled, Generate All Answers sends the merged markdown database (Experience tab) with the humanizer prompt instead of the single structured profile JSON." />
         <Toggle label="Auto-save new screening answers" checked={draft.autoSaveNewAnswers} onChange={(value) => setDraft({ ...draft, autoSaveNewAnswers: value })} hint="When you answer work authorization, timezone, location, or voluntary survey questions on the page, ApplyOS saves them to your Answer Bank for reuse." />
+        <Toggle label="Auto-insert fields on scan" checked={draft.autoInsertFields} onChange={(value) => setDraft({ ...draft, autoInsertFields: value })} hint="After scanning, fills profile fields and high-confidence Answer Bank matches into the page. Generated answers insert automatically after Generate All Answers." />
+        <Toggle label="Auto-generate AI answers on scan" checked={draft.autoGenerateAnswersOnScan} onChange={(value) => setDraft({ ...draft, autoGenerateAnswersOnScan: value })} hint="When Local-only mode is off and an OpenRouter key is set, custom application questions are answered in one batch after each scan. Answers are saved to your Answer Bank." />
         <Toggle label="Show data before sending" checked={draft.showDataBeforeSending} onChange={(value) => setDraft({ ...draft, showDataBeforeSending: value })} />
         <Toggle label="Allow raw CV for extraction" checked={draft.allowRawCvForExtraction} onChange={(value) => setDraft({ ...draft, allowRawCvForExtraction: value })} />
         <Field label={`Job fit threshold: ${draft.jobFitThreshold}%`}><input type="range" min="0" max="100" value={draft.jobFitThreshold} onChange={(e) => setDraft({ ...draft, jobFitThreshold: Number(e.target.value) })} /></Field>

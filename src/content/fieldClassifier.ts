@@ -18,7 +18,10 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["cover_letter", /\b(cover letter)\b/],
   ["additional_file", /\b(additional file|attachment|supporting document)\b/],
   ["why_company", /\b(why.*(company|us|join)|interest.*company)\b/],
-  ["why_role", /\b(why.*(role|position|job)|interest.*(role|position))\b/],
+  [
+    "why_role",
+    /\b(why.*(role|position|job)|interest.*(role|position)|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change)\b/
+  ],
   ["about_me", /\b(tell us about yourself|about you|professional summary|introduce yourself)\b/],
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation)\b/],
   ["leadership", /\b(leadership|led a team|manage a team|mentored)\b/],
@@ -27,7 +30,14 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["relocation", /\b(relocat|willing to move)\b/],
   ["legal_authorization", /\b(legally authorized|legal authorization)\b/],
   ["work_authorization", /\b(work authorization|authorized to work|right to work|work for any employer)\b/],
-  ["visa_sponsorship", /\b(visa|sponsorship|sponsor|require sponsorship)\b/],
+  [
+    "custom_question",
+    /\b(what visa|which visa|visa are you currently|visa type|how many global markets|global markets.*experience)\b/
+  ],
+  [
+    "visa_sponsorship",
+    /\b(require sponsorship|need sponsorship|visa sponsorship|sponsor your visa|sponsorship to work|will you require sponsorship)\b/
+  ],
   ["start_date", /\b(start date|available to start|notice period|availability)\b/],
   ["timezone", /\b(time zone|timezone|current time zone)\b/],
   [
@@ -39,6 +49,7 @@ const RULES: Array<[FieldCategory, RegExp]> = [
     /\b(previously employed|former employee|previously worked|employed by.*as an intern|employed by.*employee|employed by.*contractor)\b/
   ],
   ["transgender", /\b(identify as transgender|transgender)\b/],
+  ["pronouns", /\b(preferred pronouns?|pronouns?|what are your pronouns)\b/],
   ["gender", /\b(gender identity|gender|sex)\b/],
   ["race_ethnicity", /\b(race|ethnicity|ethnic|voluntary identification)\b/],
   ["disability", /\b(disability|disabled)\b/],
@@ -54,6 +65,15 @@ export function classifyField(label: string, fieldType: string): FieldCategory {
   }
   if (fieldType === "file") return "additional_file";
   if (fieldType === "radio" || fieldType === "select") return "screening_question";
-  if (fieldType === "textarea" || normalized.includes("?")) return "custom_question";
+  if (
+    fieldType === "textarea" ||
+    fieldType === "text" ||
+    normalized.includes("?") ||
+    /\b(why|what|how|when|where|which|describe|tell us|explain|reason|looking for|experience|please|motivation|interested|eligible|currently)\b/.test(
+      normalized
+    )
+  ) {
+    return "custom_question";
+  }
   return "manual_review";
 }
