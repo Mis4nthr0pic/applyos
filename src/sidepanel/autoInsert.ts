@@ -44,6 +44,18 @@ function normalizeOption(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export function formatAnswerForField(field: DetectedField, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "NO_FIT") return trimmed;
+
+  if (field.fieldType === "number" || /\bhow many\b/i.test(field.label)) {
+    const match = trimmed.match(/\b(\d{1,3})\b/);
+    if (match) return match[1];
+  }
+
+  return trimmed;
+}
+
 function valueMatchesFieldOptions(field: DetectedField, value: string): boolean {
   if (!field.options?.length) return true;
   if (field.fieldType !== "radio" && field.fieldType !== "select") return true;
@@ -77,7 +89,7 @@ function resolveInsertValue(
   const resolvedField = withEffectiveCategory(field);
   const suggestion = suggestions?.[field.fieldId];
   if (suggestion?.answer && suggestion.answer !== "NO_FIT") {
-    return { value: suggestion.answer };
+    return { value: formatAnswerForField(field, suggestion.answer) };
   }
 
   const profileValue = profileValueForField(resolvedField, userProfile);
@@ -192,4 +204,24 @@ export function autoInsertSummary(result: AutoInsertResult): string | undefined 
     parts.push(`${result.failures.length} could not be filled`);
   }
   return parts.join(" · ");
+}
+
+export async function findUnfilledSuggestedFields(
+  fields: DetectedField[],
+  suggestions: Record<string, AnswerSuggestion>
+): Promise<DetectedField[]> {
+  const unfilled: DetectedField[] = [];
+
+  for (const field of fields) {
+    const suggestion = suggestions[field.fieldId];
+    if (!suggestion?.answer || suggestion.answer === "NO_FIT") continue;
+
+    try {
+      if (await fieldIsEmpty(field)) unfilled.push(field);
+    } catch {
+      unfilled.push(field);
+    }
+  }
+
+  return unfilled;
 }

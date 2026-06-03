@@ -51,7 +51,7 @@ export function extractDetectedFields(platform: string): DetectedField[] {
     const duplicateKey =
       element instanceof HTMLInputElement && element.type === "radio" && element.name
         ? `radio:${element.name}`
-        : `${selectorHint}:${normalizedLabel}`;
+        : `${selectorHint}:${fieldId}`;
     if (seen.has(duplicateKey)) continue;
     seen.add(duplicateKey);
 
@@ -324,35 +324,66 @@ function getRadioOptionLabel(input: HTMLInputElement): string {
 }
 
 export function findField(fieldId: string, selectorHint: string): HTMLElement | null {
+  let target: HTMLElement | null = null;
+
   if (!selectorHint.includes("data-applyos-field-id")) {
-    const fromHint = resolveFieldContainerFromHint(selectorHint);
-    if (fromHint) return fromHint;
+    target = resolveFieldContainerFromHint(selectorHint);
   }
 
-  const hinted = safeQuery(selectorHint);
-  if (hinted && !selectorHint.includes("data-applyos-field-id")) {
-    return findFieldContainer(hinted) ?? hinted;
+  if (!target) {
+    const hinted = safeQuery(selectorHint);
+    target = hinted ? findFieldContainer(hinted) ?? hinted : null;
   }
 
-  const nodes = document.querySelectorAll<HTMLElement>(`[data-applyos-field-id="${CSS.escape(fieldId)}"]`);
-  for (const node of nodes) {
-    try {
-      if (node.matches(FIELD_CONTAINER_SELECTORS)) return node;
-    } catch {
-      // Ignore invalid selector matches.
+  if (!target) {
+    const nodes = document.querySelectorAll<HTMLElement>(`[data-applyos-field-id="${CSS.escape(fieldId)}"]`);
+    for (const node of nodes) {
+      try {
+        if (node.matches(FIELD_CONTAINER_SELECTORS)) {
+          target = node;
+          break;
+        }
+      } catch {
+        // Ignore invalid selector matches.
+      }
     }
-  }
-  for (const node of nodes) {
-    if (node.dataset.applyosChoiceGroup) return node;
-  }
-  for (const node of nodes) {
-    if (node instanceof HTMLInputElement && node.type === "radio") {
-      const group = node.closest<HTMLElement>("fieldset, [role='radiogroup'], [role='group']");
-      if (group) return group;
+    if (!target) {
+      for (const node of nodes) {
+        if (node.dataset.applyosChoiceGroup) {
+          target = node;
+          break;
+        }
+      }
     }
+    if (!target) {
+      for (const node of nodes) {
+        if (node instanceof HTMLInputElement && node.type === "radio") {
+          target = node.closest<HTMLElement>("fieldset, [role='radiogroup'], [role='group']");
+          if (target) break;
+        }
+      }
+    }
+    if (!target && nodes.length) target = nodes[0] ?? null;
   }
-  if (nodes.length) return nodes[0] ?? null;
-  return hinted ?? safeQuery(selectorHint);
+
+  return target ? resolveInsertTarget(target) : null;
+}
+
+function resolveInsertTarget(element: HTMLElement): HTMLElement {
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement ||
+    element.isContentEditable
+  ) {
+    return element;
+  }
+
+  const input = element.querySelector<HTMLElement>(
+    'textarea, select, input:not([type="hidden"]):not([type="submit"]):not([type="button"]), [contenteditable="true"]'
+  );
+  if (input && isElementVisible(input)) return input;
+  return element;
 }
 
 function safeQuery(selector: string): HTMLElement | null {

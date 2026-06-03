@@ -31,6 +31,17 @@ export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClea
         <Toggle label="Auto-save new screening answers" checked={draft.autoSaveNewAnswers} onChange={(value) => setDraft({ ...draft, autoSaveNewAnswers: value })} hint="When you answer work authorization, timezone, location, or voluntary survey questions on the page, ApplyOS saves them to your Answer Bank for reuse." />
         <Toggle label="Auto-insert fields on scan" checked={draft.autoInsertFields} onChange={(value) => setDraft({ ...draft, autoInsertFields: value })} hint="After scanning, fills profile fields and high-confidence Answer Bank matches into the page. Generated answers insert automatically after Generate All Answers." />
         <Toggle label="Auto-generate AI answers on scan" checked={draft.autoGenerateAnswersOnScan} onChange={(value) => setDraft({ ...draft, autoGenerateAnswersOnScan: value })} hint="When Local-only mode is off and an OpenRouter key is set, custom application questions are answered in one batch after each scan. Answers are saved to your Answer Bank." />
+        <Field
+          label="Job search context (open-ended answers)"
+          hint="Paste your reason for looking, career goals, and positioning. OpenRouter uses this with your CV for questions like “Why are you looking for a change?” and similar free-text prompts."
+        >
+          <textarea
+            rows={10}
+            value={draft.jobSearchContext ?? ""}
+            onChange={(event) => setDraft({ ...draft, jobSearchContext: event.target.value })}
+            placeholder="Explain why you are searching now, what roles you want, and the story behind your career move…"
+          />
+        </Field>
         <Toggle label="Show data before sending" checked={draft.showDataBeforeSending} onChange={(value) => setDraft({ ...draft, showDataBeforeSending: value })} />
         <Toggle label="Allow raw CV for extraction" checked={draft.allowRawCvForExtraction} onChange={(value) => setDraft({ ...draft, allowRawCvForExtraction: value })} />
         <Field label={`Job fit threshold: ${draft.jobFitThreshold}%`}><input type="range" min="0" max="100" value={draft.jobFitThreshold} onChange={(e) => setDraft({ ...draft, jobFitThreshold: Number(e.target.value) })} /></Field>

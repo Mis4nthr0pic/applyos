@@ -1,4 +1,4 @@
-import { EXPERIENCE_QUESTION_CATEGORIES } from "./constants";
+import { EXPERIENCE_QUESTION_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "./constants";
 import type { DetectedField, FieldCategory } from "./types";
 import { looksLikeApplicationQuestion } from "./screeningFields";
 
@@ -12,9 +12,30 @@ const APPLICATION_LABEL_PATTERNS: Array<[FieldCategory, RegExp]> = [
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation|technical)\b/i],
   [
     "custom_question",
-    /\b(what visa|which visa|visa are you currently|how many|years of experience|global markets|salary expectation|notice period|earliest start|linkedin|portfolio|website|github|anything else we should know)\b/i
+    /\b(what visa|which visa|visa are you currently|how many|years of experience|global markets|salary expectation|notice period|earliest start|anything else we should know)\b/i
   ]
 ];
+
+const CUSTOM_ANSWER_NAME_PATTERN =
+  /\b(question_\d+|answers_attributes|text_value|custom_field|application_question)\b/i;
+
+const PROFILE_FIELD_TYPES = new Set(["file"]);
+
+function isPollutedProfileLabel(label: string): boolean {
+  const normalized = label.toLowerCase();
+  return (
+    /\b(linkedin profile|linkedin url)\b/.test(normalized) &&
+    (normalized.includes("?") || /\b(reason|change|visa|global markets|how many)\b/.test(normalized))
+  );
+}
+
+function isMisclassifiedProfileQuestion(field: DetectedField): boolean {
+  if (!field.category || !SAFE_PROFILE_CATEGORIES.includes(field.category)) return false;
+  if (looksLikeNamedCustomAnswer(field)) return true;
+  if (isPollutedProfileLabel(field.label)) return true;
+  if (looksLikeApplicationQuestion(field.label) && field.label.includes("?")) return true;
+  return false;
+}
 
 export function inferApplicationCategory(label: string): FieldCategory {
   for (const [category, pattern] of APPLICATION_LABEL_PATTERNS) {
@@ -23,18 +44,35 @@ export function inferApplicationCategory(label: string): FieldCategory {
   return "custom_question";
 }
 
+export function looksLikeNamedCustomAnswer(field: DetectedField): boolean {
+  const hint = `${field.selectorHint} ${field.label}`.toLowerCase();
+  const name =
+    field.selectorHint.match(/name="([^"]+)"/i)?.[1]?.toLowerCase() ||
+    field.selectorHint.match(/\[name='([^']+)'\]/i)?.[1]?.toLowerCase() ||
+    "";
+  return CUSTOM_ANSWER_NAME_PATTERN.test(`${hint} ${name}`);
+}
+
 export function isApplicationQuestionField(field: DetectedField): boolean {
   if (field.isDynamic || field.isDisabled) return false;
-  if (field.fieldType === "file") return false;
+  if (PROFILE_FIELD_TYPES.has(field.fieldType)) return false;
+
+  const customAnswer = looksLikeNamedCustomAnswer(field);
+  const pollutedProfile = isMisclassifiedProfileQuestion(field);
+
+  if (field.category && SAFE_PROFILE_CATEGORIES.includes(field.category) && !customAnswer && !pollutedProfile) {
+    return false;
+  }
+
   if (field.category && EXPERIENCE_QUESTION_CATEGORIES.includes(field.category)) return true;
-  if (
-    (field.fieldType === "textarea" ||
-      field.fieldType === "text" ||
-      field.fieldType === "unknown") &&
-    looksLikeApplicationQuestion(field.label)
-  ) {
+  if (customAnswer) return true;
+  if (pollutedProfile) return true;
+
+  const questionLike = looksLikeApplicationQuestion(field.label);
+  if (questionLike && !["radio", "select", "checkbox"].includes(field.fieldType)) {
     return true;
   }
+
   if (
     field.fieldType === "textarea" &&
     field.label.trim().length >= 20 &&
@@ -42,16 +80,40 @@ export function isApplicationQuestionField(field: DetectedField): boolean {
   ) {
     return true;
   }
+
   return false;
 }
 
 export function normalizeApplicationField(field: DetectedField): DetectedField {
   if (!isApplicationQuestionField(field)) return field;
+
+  if (isPollutedProfileLabel(field.label) || isMisclassifiedProfileQuestion(field)) {
+    return {
+      ...field,
+      label: extractPrimaryQuestionFromLabel(field.label),
+      category: inferApplicationCategory(extractPrimaryQuestionFromLabel(field.label))
+    };
+  }
+
   if (field.category && EXPERIENCE_QUESTION_CATEGORIES.includes(field.category)) return field;
   return {
     ...field,
     category: inferApplicationCategory(field.label)
   };
+}
+
+function extractPrimaryQuestionFromLabel(label: string): string {
+  const parts = label
+    .split(/\?(?=\s|$)/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length > 1) {
+    const questionPart = parts.find((part) => /\b(reason|change|how many|visa|global markets|why|what)\b/i.test(part));
+    if (questionPart) return `${questionPart}?`.replace(/\*+$/, "").trim();
+  }
+
+  const withoutProfilePrefix = label.replace(/^linkedin profile\s+/i, "").trim();
+  return withoutProfilePrefix || label;
 }
 
 export function getApplicationQuestionFields(fields: DetectedField[]): DetectedField[] {

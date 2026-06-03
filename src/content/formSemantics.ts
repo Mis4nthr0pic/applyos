@@ -1,53 +1,29 @@
 import { isElementVisible } from "./pageContext";
 import { normalizeText, uniqueStrings } from "./text";
 
-/** Containers used across Greenhouse, Ashby, Lever, Workable, Workday, SmartRecruiters, etc. */
+const NARROW_FIELD_CONTAINER_SELECTORS =
+  ".field, .application-question, .application-field, .form-field, .form-group, .ashby-application-form-field-entry";
+
+/** Broader fallbacks when narrow wrappers are missing. */
 export const FIELD_CONTAINER_SELECTORS = [
+  NARROW_FIELD_CONTAINER_SELECTORS,
   "fieldset",
   "[role='group']",
   "[role='radiogroup']",
-  ".ashby-application-form-field-entry",
-  ".application-question",
   ".application--questions",
-  ".application-field",
-  ".field",
-  ".form-field",
-  ".form-group",
   ".question",
   ".text-input-wrapper",
-  "[class*='application']",
-  "[class*='question']",
-  "[class*='field-entry']",
-  "[class*='field']",
   "[data-field-path]",
   "[data-automation-id]",
   "[data-testid*='question']",
   "[data-testid*='field']"
 ].join(",");
 
-const QUESTION_LABEL_SELECTORS = [
-  "legend",
-  "label",
-  ".application-label",
-  ".application-label--required",
-  ".label",
-  ".question-title",
-  ".field-label",
-  "[class*='question-title']",
-  "[class*='field-label']",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "p",
-  "span"
-].join(",");
-
 const YES_NO_OPTION_PATTERN = /^(yes|no|true|false|y|n)$/i;
 
 export function findFieldContainer(element: HTMLElement): HTMLElement | null {
+  const narrow = element.closest<HTMLElement>(NARROW_FIELD_CONTAINER_SELECTORS);
+  if (narrow) return narrow;
   return element.closest<HTMLElement>(FIELD_CONTAINER_SELECTORS);
 }
 
@@ -73,45 +49,149 @@ export function buildContainerSelector(container: HTMLElement, label: string): s
   return `[data-applyos-field-id="${CSS.escape(`applyos-container-${hashString(label)}`)}"]`;
 }
 
-export function extractQuestionLabel(container: HTMLElement, input?: HTMLElement | null): string {
+export function extractQuestionLabel(_container: HTMLElement, input?: HTMLElement | null): string {
+  if (!input) return pickBestQuestionLabel(collectContainerLabels(_container));
+
+  const scoped = extractInputScopedLabel(input);
+  if (scoped) return scoped;
+
+  const fieldRoot = findFieldContainer(input);
+  if (fieldRoot) {
+    const fromField = pickBestQuestionLabel(collectDirectFieldLabels(fieldRoot, input));
+    if (fromField) return fromField;
+  }
+
+  return pickBestQuestionLabel([
+    ...collectAriaLabels(input),
+    ...collectContainerLabels(fieldRoot ?? _container)
+  ]);
+}
+
+function extractInputScopedLabel(input: HTMLElement): string {
+  if (input.id) {
+    const explicit = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(input.id)}"]`);
+    const explicitText = cleanLabelText(explicit?.innerText || "");
+    if (explicitText.length >= 3) return explicitText.slice(0, 500);
+  }
+
+  const parentLabel = input.closest("label");
+  const parentText = cleanLabelText(parentLabel?.innerText || "");
+  if (parentText.length >= 3) return parentText.slice(0, 500);
+
+  const previousSiblingLabel = extractPreviousSiblingLabel(input);
+  if (previousSiblingLabel) return previousSiblingLabel.slice(0, 500);
+
+  let current: HTMLElement | null = input.parentElement;
+  for (let depth = 0; depth < 3 && current; depth += 1) {
+    let sibling = current.previousElementSibling;
+    while (sibling) {
+      if (sibling instanceof HTMLElement) {
+        if (sibling.matches("label, .label, .application-label, .field-label")) {
+          const text = cleanLabelText(sibling.innerText || sibling.textContent || "");
+          if (text.length >= 8) return text.slice(0, 500);
+        }
+        const text = cleanLabelText(sibling.innerText || sibling.textContent || "");
+        if (text.length >= 12 && text.length <= 300 && !YES_NO_OPTION_PATTERN.test(text)) {
+          return text.slice(0, 500);
+        }
+      }
+      sibling = sibling.previousElementSibling;
+    }
+    current = current.parentElement;
+  }
+
+  return "";
+}
+
+function collectDirectFieldLabels(fieldRoot: HTMLElement, input: HTMLElement): string[] {
   const candidates: string[] = [];
 
-  const labelledBy = (input ?? container).getAttribute("aria-labelledby");
+  Array.from(
+    fieldRoot.querySelectorAll<HTMLElement>(
+      ":scope > label, :scope > .label, :scope > .application-label, :scope > .application-label--required, :scope > .field-label, :scope > legend"
+    )
+  )
+    .filter((node) => node !== input && isElementVisible(node))
+    .map((node) => cleanLabelText(node.innerText || node.textContent || ""))
+    .filter((text) => text.length >= 8)
+    .forEach((text) => candidates.push(text));
+
+  return candidates;
+}
+
+function collectAriaLabels(input: HTMLElement): string[] {
+  const candidates: string[] = [];
+  const labelledBy = input.getAttribute("aria-labelledby");
   if (labelledBy) {
     const label = labelledBy
       .split(/\s+/)
-      .map((id) => document.getElementById(id)?.textContent?.trim() || "")
+      .map((id) => cleanLabelText(document.getElementById(id)?.textContent || ""))
       .join(" ")
       .trim();
     if (label) candidates.push(label);
   }
 
-  const ariaLabel = (input ?? container).getAttribute("aria-label")?.trim();
+  const ariaLabel = cleanLabelText(input.getAttribute("aria-label") || "");
   if (ariaLabel) candidates.push(ariaLabel);
 
-  if (input?.id) {
-    const explicit = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(input.id)}"]`);
-    if (explicit?.innerText?.trim()) candidates.push(explicit.innerText);
-  }
+  const placeholder = cleanLabelText(input.getAttribute("placeholder") || "");
+  if (placeholder.length >= 12) candidates.push(placeholder);
 
-  const parentLabel = input?.closest("label");
-  if (parentLabel?.innerText?.trim()) candidates.push(parentLabel.innerText);
+  return candidates;
+}
 
-  Array.from(container.querySelectorAll<HTMLElement>(QUESTION_LABEL_SELECTORS))
-    .filter((node) => node !== input && isElementVisible(node) && !node.querySelector("input, select, textarea, button"))
-    .map((node) => node.innerText?.replace(/\s+/g, " ").trim() || "")
-    .filter((text) => text.length >= 8 && !YES_NO_OPTION_PATTERN.test(text))
-    .slice(0, 4)
-    .forEach((text) => candidates.push(text));
-
+function collectContainerLabels(container: HTMLElement): string[] {
   const heading = findNearbyHeading(container);
-  if (heading) candidates.push(heading);
+  return heading ? [heading] : [];
+}
 
-  return uniqueStrings(candidates)
-    .join(" ")
+function extractPreviousSiblingLabel(input: HTMLElement): string {
+  let sibling = input.previousElementSibling;
+  while (sibling) {
+    if (sibling instanceof HTMLElement) {
+      const text = cleanLabelText(sibling.innerText || sibling.textContent || "");
+      if (text.length >= 8 && text.length <= 300 && !YES_NO_OPTION_PATTERN.test(text)) {
+        return text;
+      }
+    }
+    sibling = sibling.previousElementSibling;
+  }
+  return "";
+}
+
+function cleanLabelText(value: string): string {
+  return value
+    .replace(/\*/g, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
+    .trim();
+}
+
+function pickBestQuestionLabel(candidates: string[]): string {
+  const cleaned = uniqueStrings(
+    candidates.map((candidate) => cleanLabelText(candidate)).filter((candidate) => candidate.length >= 3)
+  );
+  if (!cleaned.length) return "";
+
+  cleaned.sort((left, right) => scoreQuestionLabel(right) - scoreQuestionLabel(left));
+  return cleaned[0].slice(0, 500);
+}
+
+function scoreQuestionLabel(label: string): number {
+  let score = Math.min(label.length, 120);
+  if (label.includes("?")) score += 40;
+  if (/\b(how many|why|what|describe|tell us|reason|experience|visa|global markets|looking for)\b/i.test(label)) {
+    score += 30;
+  }
+  if (/\b(linkedin profile|linkedin url|github profile|portfolio url|resume|cover letter)\b/i.test(label)) {
+    score -= 80;
+  }
+  if (/^(first name|last name|email|phone|country|city|location)\b/i.test(label)) {
+    score -= 50;
+  }
+  if (/\b(linkedin profile|what s reason|reason you are looking)\b/i.test(label) && label.includes("?")) {
+    score -= 100;
+  }
+  return score;
 }
 
 export function findNearbyHeading(element: HTMLElement): string {

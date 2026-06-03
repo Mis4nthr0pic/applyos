@@ -20,11 +20,13 @@ export function AnswerBankTab({ answers, onSave, onDelete, onExport, onImport }:
   const [query, setQuery] = React.useState("");
   const [category, setCategory] = React.useState("");
   const [editing, setEditing] = React.useState<SavedAnswer | null>(null);
-  const filtered = answers.filter((answer) => {
+  const filtered = answers
+    .filter((answer) => {
     const matchesCategory = !category || answer.category === category;
     const haystack = normalizeText([answer.title, answer.originalQuestion, answer.answer, ...answer.tags].join(" "));
     return matchesCategory && (!query || haystack.includes(normalizeText(query)));
-  });
+  })
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
   return (
     <div className="stack">

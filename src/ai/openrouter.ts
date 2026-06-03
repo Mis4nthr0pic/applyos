@@ -191,13 +191,18 @@ export async function suggestAllAnswersFromExperience(
         languages: profile.languages
       })}`;
 
+  const jobSearchContext = settings.jobSearchContext?.trim();
+  const contextSection = jobSearchContext
+    ? `Applicant job-search context (use for open-ended motivation / reason-for-change / career goal questions; combine with CV facts):\n${jobSearchContext}`
+    : "";
+
   const payload = (await callOpenRouterJson(
     settings,
     resolvePrompt(settings, "answerWriting") || ANSWER_WRITING_SYSTEM_PROMPT,
     `Answer every application question below in one batch.
 
 ${experienceSection}
-
+${contextSection ? `\n${contextSection}\n` : ""}
 Job context (match requirements and responsibilities against the full experience database above):
 ${JSON.stringify({
   title: job.title,
@@ -222,8 +227,12 @@ ${JSON.stringify(
 Instructions:
 1. For each question, select the best positioning angle and evidence from the entire experience database.
 2. Combine facts across all CV versions when they reinforce the same point.
-3. If no documented evidence exists, return NO_FIT for that question.
-4. Apply the human voice rewrite process internally; return only final answer text in JSON.
+3. For motivation / reason-for-change / why-role questions, synthesize from Job search context (if provided) plus documented CV experience. Do not return NO_FIT when that context is available.
+4. For "how many global markets" or similar count questions, estimate a reasonable integer from countries, regions, and markets mentioned across all CVs and experience (e.g. Portugal, Brazil, global Web3 community = multiple markets). Return only a plain number unless the field is clearly a long-text textarea.
+5. Only return NO_FIT when neither the CV/database nor Job search context provides enough to draft an honest answer.
+6. Apply the human voice rewrite process internally; return only final answer text in JSON.
+7. For "how many" count fields, return only a plain number (e.g. "12"), not a sentence.
+8. Preserve each input fieldId exactly in your JSON response.
 
 Return JSON with an answers array containing exactly ${questions.length} entries, one per fieldId.`
   )) as { answers?: BatchAnswerResult[] };
@@ -233,17 +242,65 @@ Return JSON with an answers array containing exactly ${questions.length} entries
     throw new Error("OpenRouter returned no answers for this batch.");
   }
 
-  const byFieldId = new Map(answers.map((entry) => [entry.fieldId, entry]));
-  return questions.map((question) => {
-    const match = byFieldId.get(question.fieldId);
-    if (!match) {
-      return {
-        fieldId: question.fieldId,
-        answer: "NO_FIT",
-        confidence: 0,
-        reason: "No answer returned for this question."
-      };
+  const byFieldId = new Map<string, BatchAnswerResult>();
+  for (const entry of answers) {
+    if (entry.fieldId) byFieldId.set(entry.fieldId, entry);
+  }
+
+  const used = new Set<BatchAnswerResult>();
+
+  return questions.map((question, index) => {
+    let match = byFieldId.get(question.fieldId);
+    if (match) {
+      used.add(match);
+      return { ...match, fieldId: question.fieldId };
     }
-    return match;
+
+    if (answers[index] && !used.has(answers[index])) {
+      match = answers[index];
+      used.add(match);
+      return { ...match, fieldId: question.fieldId };
+    }
+
+    const normalizedQuestion = normalizeQuestionLabel(question.label);
+    match = answers.find(
+      (entry) =>
+        !used.has(entry) &&
+        entry.fieldId &&
+        normalizeQuestionLabel(entry.fieldId) === normalizedQuestion
+    );
+    if (match) {
+      used.add(match);
+      return { ...match, fieldId: question.fieldId };
+    }
+
+    match = answers.find(
+      (entry) => !used.has(entry) && entry.reason && normalizeQuestionLabel(entry.reason).includes(normalizedQuestion.slice(0, 24))
+    );
+    if (match) {
+      used.add(match);
+      return { ...match, fieldId: question.fieldId };
+    }
+
+    const unused = answers.find((entry) => !used.has(entry));
+    if (unused && answers.length === questions.length) {
+      used.add(unused);
+      return { ...unused, fieldId: question.fieldId };
+    }
+
+    return {
+      fieldId: question.fieldId,
+      answer: "NO_FIT",
+      confidence: 0,
+      reason: "No answer returned for this question."
+    };
   });
+}
+
+function normalizeQuestionLabel(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

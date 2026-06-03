@@ -1,3 +1,5 @@
+import { DEFAULT_JOB_SEARCH_CONTEXT } from "./defaultJobSearchContext";
+
 export type PageType =
   | "job_listing_page"
   | "job_application_form"
@@ -348,6 +350,8 @@ export interface Settings {
   autoSaveNewAnswers: boolean;
   autoInsertFields: boolean;
   autoGenerateAnswersOnScan: boolean;
+  /** Free-text context for open-ended questions (reason for leaving, motivation, etc.). */
+  jobSearchContext?: string;
   promptOverrides?: Partial<Record<import("../ai/prompts").PromptKey, string>>;
 }
 
@@ -402,7 +406,8 @@ export const DEFAULT_SETTINGS: Settings = {
   useOptimizedExperienceDatabase: true,
   autoSaveNewAnswers: true,
   autoInsertFields: true,
-  autoGenerateAnswersOnScan: true
+  autoGenerateAnswersOnScan: true,
+  jobSearchContext: DEFAULT_JOB_SEARCH_CONTEXT
 };
 
 export const EMPTY_EXPERIENCE_DATABASE: ExperienceDatabase = {

@@ -60,11 +60,27 @@ const RULES: Array<[FieldCategory, RegExp]> = [
 
 export function classifyField(label: string, fieldType: string): FieldCategory {
   const normalized = normalizeText(label);
+
+  if (
+    /\blinkedin\b/.test(normalized) &&
+    (label.includes("?") || /\b(reason|change|how many|visa|global markets)\b/i.test(label))
+  ) {
+    for (const [category, pattern] of RULES) {
+      if (["why_role", "custom_question", "why_company", "about_me"].includes(category) && pattern.test(normalized)) {
+        return category;
+      }
+    }
+    return "custom_question";
+  }
+
   for (const [category, pattern] of RULES) {
     if (pattern.test(normalized)) return category;
   }
   if (fieldType === "file") return "additional_file";
   if (fieldType === "radio" || fieldType === "select") return "screening_question";
+  if (fieldType === "number" && /\b(how many|years|months|number of)\b/.test(normalized)) {
+    return "custom_question";
+  }
   if (
     fieldType === "textarea" ||
     fieldType === "text" ||
