@@ -3,7 +3,7 @@
   "name": "ApplyOS",
   "description": "A local-first, honest job application assistant.",
   "version": "0.2.0",
-  "permissions": ["storage", "scripting", "sidePanel", "tabs"],
+  "permissions": ["storage", "scripting", "sidePanel", "tabs", "webNavigation"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "service_worker": "assets/background.js",
@@ -19,7 +19,8 @@
     {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["assets/content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ]
 }

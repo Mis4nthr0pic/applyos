@@ -854,7 +854,12 @@ export function App() {
 
   async function handleSaveCurrentValue(field: DetectedField) {
     try {
-      const result = await sendToActiveTab<{ ok: boolean; value?: string }>({ type: "GET_FIELD_VALUE", fieldId: field.fieldId, selectorHint: field.selectorHint });
+      const result = await sendToActiveTab<{ ok: boolean; value?: string }>({
+        type: "GET_FIELD_VALUE",
+        fieldId: field.fieldId,
+        selectorHint: field.selectorHint,
+        frameId: field.frameId
+      });
       if (!result.value?.trim()) throw new Error("The field is empty. Enter an answer in the page first.");
       const timestamp = new Date().toISOString();
       await db.savedAnswers.put({

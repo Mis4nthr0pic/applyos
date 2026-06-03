@@ -113,6 +113,8 @@ export interface DetectedField {
   category?: FieldCategory;
   dependsOn?: string[];
   isDynamic?: boolean;
+  /** Frame that owns this field when the ATS form is embedded in an iframe. */
+  frameId?: number;
 }
 
 export interface ExperienceRole {
@@ -390,8 +392,8 @@ export type ContentMessage =
   | { type: "SCAN_PAGE"; watchDynamicFields: boolean }
   | { type: "EXTRACT_JOB_INFO" }
   | { type: "SET_DYNAMIC_WATCH"; enabled: boolean }
-  | { type: "INSERT_FIELD"; fieldId: string; selectorHint: string; value: string }
-  | { type: "GET_FIELD_VALUE"; fieldId: string; selectorHint: string }
+  | { type: "INSERT_FIELD"; fieldId: string; selectorHint: string; value: string; frameId?: number }
+  | { type: "GET_FIELD_VALUE"; fieldId: string; selectorHint: string; frameId?: number }
   | { type: "PING" };
 
 export const DEFAULT_SETTINGS: Settings = {

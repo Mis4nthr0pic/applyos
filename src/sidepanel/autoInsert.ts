@@ -77,7 +77,8 @@ async function fieldIsEmpty(field: DetectedField): Promise<boolean> {
   const result = await sendToActiveTab<{ ok: boolean; value?: string }>({
     type: "GET_FIELD_VALUE",
     fieldId: field.fieldId,
-    selectorHint: field.selectorHint
+    selectorHint: field.selectorHint,
+    frameId: field.frameId
   });
   return !result.value?.trim();
 }
