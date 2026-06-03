@@ -57,8 +57,20 @@ function extractAshbyQuestionLabel(input: HTMLElement): string {
   return cleanLabelText(title?.innerText || title?.textContent || "");
 }
 
+function extractLeverApplicationLabel(input: HTMLElement): string {
+  const fieldRoot = input.closest(".application-field");
+  const labelNode =
+    fieldRoot?.parentElement?.querySelector<HTMLElement>(".application-label .text") ||
+    fieldRoot?.parentElement?.querySelector<HTMLElement>(".application-label") ||
+    input.closest("li")?.querySelector<HTMLElement>(".application-label .text, .application-label");
+  return cleanLabelText(labelNode?.innerText || labelNode?.textContent || "");
+}
+
 export function extractQuestionLabel(_container: HTMLElement, input?: HTMLElement | null): string {
   if (!input) return pickBestQuestionLabel(collectContainerLabels(_container));
+
+  const leverLabel = extractLeverApplicationLabel(input);
+  if (leverLabel.length >= 8) return leverLabel.slice(0, 500);
 
   const ashbyLabel = extractAshbyQuestionLabel(input);
   if (ashbyLabel.length >= 8) return ashbyLabel.slice(0, 500);

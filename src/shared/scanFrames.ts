@@ -1,3 +1,4 @@
+import { dedupeDetectedFields } from "./dedupeFields";
 import { mergeJobInfo } from "../adapters/listingResolver";
 import type { DetectedField, PageType, ScanResult } from "./types";
 
@@ -12,8 +13,26 @@ function pickLongerText(left?: string, right?: string): string {
 }
 
 export function looksLikeEmbeddedAtsPage(tabUrl: string, bodyText?: string): boolean {
+  if (looksLikeNativeAtsPage(tabUrl)) return false;
+
   const haystack = `${tabUrl} ${bodyText ?? ""}`.toLowerCase();
-  return /greenhouse\.io|gh_jid|grnhse|lever\.co|lever-app|ashbyhq\.com|ashby/i.test(haystack);
+  return /greenhouse\.io|gh_jid|grnhse|lever-app|ashbyhq\.com/i.test(haystack);
+}
+
+export function looksLikeNativeAtsPage(tabUrl: string): boolean {
+  try {
+    const host = new URL(tabUrl).hostname.toLowerCase();
+    return (
+      host === "greenhouse.io" ||
+      host.endsWith(".greenhouse.io") ||
+      host === "lever.co" ||
+      host.endsWith(".lever.co") ||
+      host === "ashbyhq.com" ||
+      host.endsWith(".ashbyhq.com")
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Union fields from repeated scans of the same frame (lazy iframe / progressive form render). */
@@ -26,7 +45,7 @@ export function mergeFrameScanSnapshot(
   const seen = new Set<string>();
   const fields: DetectedField[] = [];
   for (const field of [...previous.fields, ...next.fields]) {
-    const key = `${field.selectorHint}:${field.normalizedLabel}`;
+    const key = `${next.frameId}:${field.selectorHint}:${field.normalizedLabel}`;
     if (seen.has(key)) continue;
     seen.add(key);
     fields.push({ ...field, frameId: next.frameId });
@@ -34,7 +53,7 @@ export function mergeFrameScanSnapshot(
 
   return {
     ...next,
-    fields,
+    fields: dedupeDetectedFields(fields),
     jobInfo: mergeJobInfo(next.jobInfo, previous.jobInfo),
     context: {
       ...next.context,
@@ -64,19 +83,15 @@ function pickAdapterResult(results: FrameScanResult[]): FrameScanResult {
 }
 
 function mergeFields(results: FrameScanResult[]): DetectedField[] {
-  const seen = new Set<string>();
   const merged: DetectedField[] = [];
 
   for (const result of results) {
     for (const field of result.fields) {
-      const key = `${result.frameId}:${field.selectorHint}:${field.normalizedLabel}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
       merged.push({ ...field, frameId: result.frameId });
     }
   }
 
-  return merged;
+  return dedupeDetectedFields(merged);
 }
 
 function mergePageType(results: FrameScanResult[], fieldCount: number): PageType {

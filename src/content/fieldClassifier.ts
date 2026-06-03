@@ -8,7 +8,7 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["full_name", /\b(full name|your name)\b/],
   ["email", /\b(e-?mail)\b/],
   ["phone", /\b(phone|mobile|telephone)\b/],
-  ["country", /\b(country|nation)\b/],
+  ["country", /\b(country|nation|where do you currently live|country of residence|nationality)\b/],
   ["state", /\b(state|province|region)\b/],
   ["city", /\b(city|town)\b/],
   ["linkedin", /\blinkedin\b/],

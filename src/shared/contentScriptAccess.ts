@@ -1,5 +1,5 @@
 import type { ExtractedJobPayload } from "../adapters/extractJob";
-import { mergeFrameScanResults, mergeFrameScanSnapshot, looksLikeEmbeddedAtsPage, type FrameScanResult } from "./scanFrames";
+import { mergeFrameScanResults, mergeFrameScanSnapshot, looksLikeEmbeddedAtsPage, looksLikeNativeAtsPage, type FrameScanResult } from "./scanFrames";
 import type { ContentMessage, ScanResult } from "./types";
 
 export const CONTENT_SCRIPT_FILE = "assets/content.js";
@@ -100,7 +100,8 @@ async function scanAllFrames(tabId: number, message: Extract<ContentMessage, { t
     tabUrl,
     firstPass.find((result) => result.frameId === 0)?.context.bodyText
   );
-  const pollDelays = embeddedAts ? [0, 600, 1200, 2000, 2800] : [0, 500];
+  const nativeAts = looksLikeNativeAtsPage(tabUrl);
+  const pollDelays = embeddedAts ? [0, 600, 1200, 2000, 2800] : nativeAts ? [0, 400, 900] : [0, 500];
 
   for (const delay of pollDelays) {
     if (delay > 0) {

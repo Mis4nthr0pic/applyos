@@ -1,5 +1,26 @@
 import type { AnswerSuggestion, DetectedField } from "./types";
 import { getApplicationQuestionFields } from "./applicationFields";
+import { dedupeDetectedFields } from "./dedupeFields";
+
+function answeredQuestionLabels(
+  fields: DetectedField[],
+  suggestions: Record<string, AnswerSuggestion>
+): Set<string> {
+  const labels = new Set<string>();
+  for (const field of fields) {
+    const suggestion = suggestions[field.fieldId];
+    if (suggestion?.answer && suggestion.answer !== "NO_FIT") {
+      labels.add(field.normalizedLabel);
+    }
+  }
+  return labels;
+}
+
+export function uniqueApplicationQuestionFields(fields: DetectedField[]): DetectedField[] {
+  return dedupeDetectedFields(getApplicationQuestionFields(fields)).filter((field) =>
+    Boolean(field.normalizedLabel)
+  );
+}
 
 /** Keep AI suggestions when field IDs change between scans but labels stay the same. */
 export function mergeScanSuggestions(
@@ -36,15 +57,13 @@ export function applicationFieldsNeedingAi(
   fields: DetectedField[],
   suggestions: Record<string, AnswerSuggestion>
 ): DetectedField[] {
-  return getApplicationQuestionFields(fields).filter((field) => {
-    const suggestion = suggestions[field.fieldId];
-    return !suggestion?.answer || suggestion.answer === "NO_FIT";
-  });
+  const answered = answeredQuestionLabels(fields, suggestions);
+  return uniqueApplicationQuestionFields(fields).filter((field) => !answered.has(field.normalizedLabel));
 }
 
 export function countAnsweredApplicationQuestions(
   fields: DetectedField[],
   suggestions: Record<string, AnswerSuggestion>
 ): number {
-  return getApplicationQuestionFields(fields).length - applicationFieldsNeedingAi(fields, suggestions).length;
+  return uniqueApplicationQuestionFields(fields).length - applicationFieldsNeedingAi(fields, suggestions).length;
 }

@@ -33,7 +33,8 @@ import { getApplicationQuestionFields, hasApplicationQuestionsForAi } from "../s
 import {
   applicationFieldsNeedingAi,
   countAnsweredApplicationQuestions,
-  mergeScanSuggestions
+  mergeScanSuggestions,
+  uniqueApplicationQuestionFields
 } from "../shared/scanSuggestions";
 import { saveFieldAnswer } from "../shared/saveFieldAnswer";
 import { enrichCvSourceFromCatalog, heuristicCvSummary, recommendCvLocally } from "../matching/recommendCv";
@@ -328,7 +329,7 @@ export function App() {
         if (insertSummary) noticeText += ` ${insertSummary}.`;
       }
 
-      const applicationQuestionCount = getApplicationQuestionFields(nextResult.fields).length;
+      const applicationQuestionCount = uniqueApplicationQuestionFields(nextResult.fields).length;
       const fieldsNeedingAi = applicationFieldsNeedingAi(nextResult.fields, preservedSuggestions);
       const alreadyAnsweredCount = countAnsweredApplicationQuestions(nextResult.fields, preservedSuggestions);
       const shouldRunAi =
@@ -514,9 +515,10 @@ export function App() {
       fieldsToAnswer?: DetectedField[];
     }
   ): Promise<string | undefined> {
-    const applicationFields =
-      options.fieldsToAnswer ??
-      applicationFieldsNeedingAi(scanResult.fields, options.existingSuggestions ?? {});
+    const applicationFields = options.fieldsToAnswer ?? applicationFieldsNeedingAi(
+      scanResult.fields,
+      options.existingSuggestions ?? {}
+    );
 
     if (!applicationFields.length) {
       if (options.interactive) {
