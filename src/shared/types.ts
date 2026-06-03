@@ -32,6 +32,7 @@ export interface JobInfo {
   benefits?: string[];
   salaryRange?: string;
   sourceUrl: string;
+  listingSourceUrl?: string;
   platform: string;
   detectedAt: string;
 }
@@ -83,7 +84,13 @@ export type FieldCategory =
   | "veteran_status"
   | "age"
   | "legal_authorization"
-  | "manual_review";
+  | "manual_review"
+  | "screening_question"
+  | "timezone"
+  | "location_eligibility"
+  | "previous_employment"
+  | "transgender"
+  | "voluntary_disclosure";
 
 export interface DetectedField {
   fieldId: string;
@@ -290,6 +297,16 @@ export interface QueuedJobUrl {
   scannedAt?: string;
 }
 
+export interface JobListingCache {
+  id: string;
+  listingUrl: string;
+  extractedFromUrl: string;
+  jobInfo: JobInfo;
+  platform: string;
+  pageType: PageType;
+  extractedAt: string;
+}
+
 export interface ExperienceDatabase {
   id: "default";
   markdown: string;
@@ -304,6 +321,13 @@ export interface CvSource {
   rawText: string;
   sourceType: ExperienceProfile["sourceType"];
   importedAt: string;
+  positioningLabel?: string;
+  summary?: string;
+  targetRoles?: string[];
+  keyStrengths?: string[];
+  whenToUse?: string;
+  keywords?: string[];
+  localPathHint?: string;
 }
 
 export interface Settings {
@@ -320,6 +344,8 @@ export interface Settings {
   queueAutoScanAfterOpening: boolean;
   queueDevMode: boolean;
   useOptimizedExperienceDatabase: boolean;
+  autoSaveNewAnswers: boolean;
+  promptOverrides?: Partial<Record<import("../ai/prompts").PromptKey, string>>;
 }
 
 export interface ScanHistory {
@@ -341,6 +367,8 @@ export interface ScanResult {
   fields: DetectedField[];
   message?: string;
   watching: boolean;
+  jobInfoFromListing?: boolean;
+  jobInfoExtracted?: boolean;
 }
 
 export interface InsertResult {
@@ -350,13 +378,14 @@ export interface InsertResult {
 
 export type ContentMessage =
   | { type: "SCAN_PAGE"; watchDynamicFields: boolean }
+  | { type: "EXTRACT_JOB_INFO" }
   | { type: "SET_DYNAMIC_WATCH"; enabled: boolean }
   | { type: "INSERT_FIELD"; fieldId: string; selectorHint: string; value: string }
   | { type: "GET_FIELD_VALUE"; fieldId: string; selectorHint: string };
 
 export const DEFAULT_SETTINGS: Settings = {
   id: "default",
-  openRouterModel: "openai/gpt-4o-mini",
+  openRouterModel: "google/gemini-2.0-flash-lite-001",
   smartMatchEnabled: false,
   generateFromExperienceEnabled: false,
   jobFitThreshold: 70,
@@ -366,7 +395,8 @@ export const DEFAULT_SETTINGS: Settings = {
   queueOpenBehavior: "current_tab",
   queueAutoScanAfterOpening: false,
   queueDevMode: false,
-  useOptimizedExperienceDatabase: true
+  useOptimizedExperienceDatabase: true,
+  autoSaveNewAnswers: true
 };
 
 export const EMPTY_EXPERIENCE_DATABASE: ExperienceDatabase = {

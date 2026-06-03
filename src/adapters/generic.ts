@@ -43,7 +43,7 @@ export function extractGenericJobInfo(context: PageContext, platform: string): J
   const title =
     asString(jobPosting?.title) ||
     context.meta["og:title"] ||
-    document.querySelector("h1")?.textContent?.trim() ||
+    context.meta.title ||
     context.title;
   const company =
     nestedString(jobPosting?.hiringOrganization, "name") ||
@@ -73,14 +73,105 @@ export function extractGenericJobInfo(context: PageContext, platform: string): J
 }
 
 function extractSections(text: string): Record<keyof typeof SECTION_LABELS, string[]> {
+  const decoded = decodeHtmlEntities(text.replace(/<[^>]+>/g, "\n"));
+  const split = splitIntoSections(decoded);
   const result = {
-    requirements: [] as string[],
-    responsibilities: [] as string[],
-    niceToHave: [] as string[],
-    benefits: [] as string[]
+    requirements: uniqueStrings(split.requirements).slice(0, 30),
+    responsibilities: uniqueStrings(split.responsibilities).slice(0, 30),
+    niceToHave: uniqueStrings(split.niceToHave).slice(0, 30),
+    benefits: uniqueStrings(split.benefits).slice(0, 30)
+  };
+  return result;
+}
+
+const SECTION_SPLITTERS: Array<{
+  key: keyof typeof SECTION_LABELS;
+  patterns: RegExp[];
+}> = [
+  {
+    key: "responsibilities",
+    patterns: [
+      /\bin this role,? you(?:'|&#39;)ll\b/i,
+      /\bwhat you(?:'|&#39;)ll do\b/i,
+      /\bresponsibilities\b/i,
+      /\bthe role\b/i,
+      /\babout the role\b/i
+    ]
+  },
+  {
+    key: "requirements",
+    patterns: [
+      /\bwe(?:'|&#39;)re looking for candidates who have\b/i,
+      /\bwhat we(?:'|&#39;)re looking for\b/i,
+      /\brequirements\b/i,
+      /\bqualifications\b/i,
+      /\byou have\b/i,
+      /\bwhat you(?:'|&#39;)ll need\b/i
+    ]
+  },
+  {
+    key: "niceToHave",
+    patterns: [
+      /\byou might also have\b/i,
+      /\bnice to have\b/i,
+      /\bbonus points\b/i,
+      /\bpreferred qualifications\b/i,
+      /\bpreferred experience\b/i
+    ]
+  },
+  {
+    key: "benefits",
+    patterns: [
+      /\bbenefits\b/i,
+      /\bperks\b/i,
+      /\bwhat we offer\b/i
+    ]
+  }
+];
+
+function splitIntoSections(text: string): Record<keyof typeof SECTION_LABELS, string[]> {
+  const result: Record<keyof typeof SECTION_LABELS, string[]> = {
+    requirements: [],
+    responsibilities: [],
+    niceToHave: [],
+    benefits: []
+  };
+
+  type Match = { key: keyof typeof SECTION_LABELS; index: number; length: number };
+  const matches: Match[] = [];
+  for (const section of SECTION_SPLITTERS) {
+    for (const pattern of section.patterns) {
+      const match = pattern.exec(text);
+      if (match?.index !== undefined) {
+        matches.push({ key: section.key, index: match.index, length: match[0].length });
+        break;
+      }
+    }
+  }
+
+  matches.sort((a, b) => a.index - b.index);
+  if (!matches.length) {
+    return extractSectionsByLines(text);
+  }
+
+  for (let i = 0; i < matches.length; i += 1) {
+    const current = matches[i];
+    const nextIndex = matches[i + 1]?.index ?? text.length;
+    const chunk = text.slice(current.index + current.length, nextIndex);
+    result[current.key].push(...extractBulletLines(chunk));
+  }
+
+  return result;
+}
+
+function extractSectionsByLines(text: string): Record<keyof typeof SECTION_LABELS, string[]> {
+  const result: Record<keyof typeof SECTION_LABELS, string[]> = {
+    requirements: [],
+    responsibilities: [],
+    niceToHave: [],
+    benefits: []
   };
   const lines = text
-    .replace(/<[^>]+>/g, "\n")
     .split(/\n/)
     .map((line) => line.replace(/^[\s•*\-–—]+/, "").trim())
     .filter(Boolean);
@@ -96,10 +187,28 @@ function extractSections(text: string): Record<keyof typeof SECTION_LABELS, stri
     }
     if (current && line.length < 300) result[current].push(line);
   }
-  for (const key of Object.keys(result) as Array<keyof typeof result>) {
-    result[key] = uniqueStrings(result[key]).slice(0, 30);
-  }
   return result;
+}
+
+function extractBulletLines(chunk: string): string[] {
+  return chunk
+    .split(/\n/)
+    .map((line) => line.replace(/^[\s•*\-–—]+/, "").trim())
+    .filter((line) => line.length > 2 && line.length < 400);
+}
+
+function decodeHtmlEntities(value: string): string {
+  const textarea = typeof document !== "undefined" ? document.createElement("textarea") : null;
+  if (textarea) {
+    textarea.innerHTML = value;
+    return textarea.value;
+  }
+  return value
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
 }
 
 function asString(value: unknown): string | undefined {

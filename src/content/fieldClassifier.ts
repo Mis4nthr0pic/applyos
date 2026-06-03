@@ -4,7 +4,7 @@ import { normalizeText } from "./text";
 const RULES: Array<[FieldCategory, RegExp]> = [
   ["first_name", /\b(first name|given name|forename)\b/],
   ["last_name", /\b(last name|family name|surname)\b/],
-  ["full_name", /\b(full name|your name|name)\b/],
+  ["full_name", /\b(full name|your name)\b/],
   ["email", /\b(e-?mail)\b/],
   ["phone", /\b(phone|mobile|telephone)\b/],
   ["country", /\b(country|nation)\b/],
@@ -26,14 +26,25 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["salary", /\b(salary|compensation|pay expectation|desired pay)\b/],
   ["relocation", /\b(relocat|willing to move)\b/],
   ["legal_authorization", /\b(legally authorized|legal authorization)\b/],
-  ["work_authorization", /\b(work authorization|authorized to work|right to work)\b/],
-  ["visa_sponsorship", /\b(visa|sponsorship|sponsor)\b/],
+  ["work_authorization", /\b(work authorization|authorized to work|right to work|work for any employer)\b/],
+  ["visa_sponsorship", /\b(visa|sponsorship|sponsor|require sponsorship)\b/],
   ["start_date", /\b(start date|available to start|notice period|availability)\b/],
-  ["gender", /\b(gender|sex)\b/],
-  ["race_ethnicity", /\b(race|ethnicity|ethnic)\b/],
+  ["timezone", /\b(time zone|timezone|current time zone)\b/],
+  [
+    "location_eligibility",
+    /\b(reside in|currently reside|eligible for hire in|located in one of these|confirm if you currently reside)\b/
+  ],
+  [
+    "previous_employment",
+    /\b(previously employed|former employee|previously worked|employed by.*as an intern|employed by.*employee|employed by.*contractor)\b/
+  ],
+  ["transgender", /\b(identify as transgender|transgender)\b/],
+  ["gender", /\b(gender identity|gender|sex)\b/],
+  ["race_ethnicity", /\b(race|ethnicity|ethnic|voluntary identification)\b/],
   ["disability", /\b(disability|disabled)\b/],
   ["veteran_status", /\b(veteran|military service)\b/],
-  ["age", /\b(age|date of birth|birth date)\b/]
+  ["age", /\b(age|date of birth|birth date)\b/],
+  ["voluntary_disclosure", /\b(voluntary|self identification|self-identification|federal contractor)\b/]
 ];
 
 export function classifyField(label: string, fieldType: string): FieldCategory {
@@ -42,6 +53,7 @@ export function classifyField(label: string, fieldType: string): FieldCategory {
     if (pattern.test(normalized)) return category;
   }
   if (fieldType === "file") return "additional_file";
-  if (fieldType === "textarea" || normalized.endsWith("?")) return "custom_question";
+  if (fieldType === "radio" || fieldType === "select") return "screening_question";
+  if (fieldType === "textarea" || normalized.includes("?")) return "custom_question";
   return "manual_review";
 }

@@ -48,7 +48,29 @@ export const FACTUAL_CATEGORIES: FieldCategory[] = [
   "relocation",
   "work_authorization",
   "visa_sponsorship",
+  "start_date",
+  "timezone",
+  "location_eligibility",
+  "previous_employment"
+];
+
+export const PROFILE_PREFERENCE_CATEGORIES: FieldCategory[] = [
+  "salary",
+  "relocation",
   "start_date"
+];
+
+export const SCREENING_QUESTION_CATEGORIES: FieldCategory[] = [
+  ...FACTUAL_CATEGORIES,
+  "legal_authorization",
+  "screening_question",
+  "gender",
+  "race_ethnicity",
+  "disability",
+  "veteran_status",
+  "age",
+  "transgender",
+  "voluntary_disclosure"
 ];
 
 export const DOCUMENT_CATEGORIES: FieldCategory[] = [

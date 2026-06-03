@@ -1,16 +1,21 @@
-import { selectAdapter } from "../adapters";
+import { extractJobFromPage } from "../adapters/extractJob";
+import { enrichJobInfo } from "../adapters/enrichJobInfo";
 import type { ContentMessage, ScanResult } from "../shared/types";
 import { buildPageContext } from "./pageContext";
 import {
   attachDependencyListeners,
   extractDetectedFields,
   findField,
-  insertFieldValue
+  insertFieldValue,
+  readFieldValue
 } from "./fieldDetection";
+import { startFieldAutoCapture } from "./fieldAutoCapture";
+import { selectAdapter } from "../adapters";
 
 let observer: MutationObserver | undefined;
 let observerTimeout: number | undefined;
 let removeDependencyListeners: (() => void) | undefined;
+let stopFieldAutoCapture: (() => void) | undefined;
 let currentPlatform = "generic";
 let lastFieldSignature = "";
 
@@ -18,6 +23,12 @@ chrome.runtime.onMessage.addListener(
   (message: ContentMessage, _sender, sendResponse: (response: unknown) => void) => {
     if (message.type === "SCAN_PAGE") {
       scanPage(message.watchDynamicFields)
+        .then(sendResponse)
+        .catch((error) => sendResponse({ error: getErrorMessage(error) }));
+      return true;
+    }
+    if (message.type === "EXTRACT_JOB_INFO") {
+      extractJobOnly()
         .then(sendResponse)
         .catch((error) => sendResponse({ error: getErrorMessage(error) }));
       return true;
@@ -34,12 +45,17 @@ chrome.runtime.onMessage.addListener(
     }
     if (message.type === "GET_FIELD_VALUE") {
       const element = findField(message.fieldId, message.selectorHint);
-      sendResponse({ ok: Boolean(element), value: readValue(element) });
+      sendResponse({ ok: Boolean(element), value: readFieldValue(element) });
       return false;
     }
     return false;
   }
 );
+
+async function extractJobOnly() {
+  const context = buildPageContext();
+  return extractJobFromPage(context);
+}
 
 async function scanPage(watchDynamicFields: boolean): Promise<ScanResult> {
   const context = buildPageContext();
@@ -47,19 +63,28 @@ async function scanPage(watchDynamicFields: boolean): Promise<ScanResult> {
   currentPlatform = adapter.id;
   const pageType = adapter.classify(context);
   const fields = await adapter.extractFields(context);
-  const jobInfo = await adapter.extractJobInfo(context);
+  const extracted = await extractJobFromPage(context);
+  const jobInfo = extracted.jobInfo;
   lastFieldSignature = fieldSignature(fields);
 
   if (watchDynamicFields) startObserver();
   else stopObserver();
 
+  stopFieldAutoCapture?.();
+  stopFieldAutoCapture = startFieldAutoCapture(adapter.id);
+
   const hasApplyButton = context.buttons.some((button) => /\bapply\b/i.test(button));
+  const listingNote = extracted.jobInfoFromListing
+    ? " Stored job requirements were merged for this role."
+    : "";
   const message =
     pageType === "job_listing_page" && fields.length === 0 && hasApplyButton
-      ? "This looks like a job listing page. Click Apply manually, then run Scan Page again."
+      ? `Job listing detected. Use Extract Job Info, click Apply manually, then Scan Page for form fields.${listingNote}`
       : fields.length === 0
-        ? "No application fields were found. The page may be a listing, or the form may not be visible yet."
-        : undefined;
+        ? `No application fields were found.${extracted.jobInfoFromListing ? listingNote : " Extract job info first if this is a listing page."}`
+        : extracted.jobInfoFromListing
+          ? `Application form detected.${listingNote}`
+          : undefined;
 
   return {
     context,
@@ -69,7 +94,8 @@ async function scanPage(watchDynamicFields: boolean): Promise<ScanResult> {
     jobInfo,
     fields,
     message,
-    watching: Boolean(observer)
+    watching: Boolean(observer),
+    jobInfoFromListing: extracted.jobInfoFromListing
   };
 }
 
@@ -115,14 +141,6 @@ function fieldSignature(fields: ReturnType<typeof extractDetectedFields>): strin
     .join(";");
 }
 
-function readValue(element: HTMLElement | null): string {
-  if (!element) return "";
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
-    return element.value;
-  }
-  return element.innerText || "";
-}
-
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown content script error";
 }
@@ -132,3 +150,5 @@ function notifyExtension(message: Record<string, unknown>): void {
     // The side panel may have been closed while a short dynamic watch was active.
   });
 }
+
+stopFieldAutoCapture = startFieldAutoCapture("generic");

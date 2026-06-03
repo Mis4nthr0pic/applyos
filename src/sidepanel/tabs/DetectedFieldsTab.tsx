@@ -6,18 +6,19 @@ import {
   Save,
   ScanSearch,
   Sparkles,
-  WandSparkles
+  WandSparkles,
+  FileSearch
 } from "lucide-react";
-import { findAnswerMatches } from "../../matching/answerMatcher";
 import {
   DOCUMENT_CATEGORIES,
   EXPERIENCE_QUESTION_CATEGORIES,
-  FACTUAL_CATEGORIES,
+  PROFILE_PREFERENCE_CATEGORIES,
   SAFE_PROFILE_CATEGORIES,
-  SENSITIVE_CATEGORIES
+  SCREENING_QUESTION_CATEGORIES
 } from "../../shared/constants";
 import type {
   AnswerSuggestion,
+  CvSource,
   DetectedField,
   JobFitScore,
   SavedAnswer,
@@ -25,12 +26,16 @@ import type {
   Settings,
   UserProfile
 } from "../../shared/types";
+import type { CvRecommendation } from "../../matching/recommendCv";
+import { findAnswerMatches } from "../../matching/answerMatcher";
 import { profileValueForField, recommendationLabel } from "../lib";
 import { Badge, Button, Card, EmptyState, Notice } from "../components/UI";
 
 interface Props {
   scan?: ScanResult;
   fit?: JobFitScore;
+  cvSources: CvSource[];
+  cvRecommendation?: CvRecommendation;
   answers: SavedAnswer[];
   userProfile?: UserProfile;
   settings: Settings;
@@ -39,6 +44,7 @@ interface Props {
   watchDynamic: boolean;
   onWatchDynamic: (value: boolean) => void;
   onScan: () => void;
+  onExtractJobInfo: () => void;
   onInsert: (field: DetectedField, value: string, savedAnswerId?: string) => void;
   onAutofillSafe: (fields: DetectedField[]) => void;
   onSaveJob: (status: "saved" | "applied" | "skipped") => void;
@@ -48,6 +54,7 @@ interface Props {
   onSaveSuggestion: (field: DetectedField, suggestion: AnswerSuggestion) => void;
   onSkip: (field: DetectedField) => void;
   onImproveJob: () => void;
+  onRecommendCvWithAi: () => void;
 }
 
 export function DetectedFieldsTab(props: Props) {
@@ -59,7 +66,14 @@ export function DetectedFieldsTab(props: Props) {
     (field) => field.category && EXPERIENCE_QUESTION_CATEGORIES.includes(field.category) && !field.isDynamic
   );
   const factual = fields.filter(
-    (field) => field.category && FACTUAL_CATEGORIES.includes(field.category) && !field.isDynamic
+    (field) => field.category && PROFILE_PREFERENCE_CATEGORIES.includes(field.category) && !field.isDynamic
+  );
+  const screening = fields.filter(
+    (field) =>
+      field.category &&
+      SCREENING_QUESTION_CATEGORIES.includes(field.category) &&
+      !field.isDisabled &&
+      !field.isDynamic
   );
   const documents = fields.filter(
     (field) => field.category && DOCUMENT_CATEGORIES.includes(field.category)
@@ -67,10 +81,22 @@ export function DetectedFieldsTab(props: Props) {
   const dynamic = fields.filter((field) => field.isDynamic);
   const manual = fields.filter(
     (field) =>
-      field.isDisabled ||
-      field.category === "manual_review" ||
-      (field.category && SENSITIVE_CATEGORIES.includes(field.category))
+      !field.isDynamic &&
+      (field.isDisabled ||
+        field.category === "manual_review" ||
+        !field.category ||
+        (!SAFE_PROFILE_CATEGORIES.includes(field.category) &&
+          !EXPERIENCE_QUESTION_CATEGORIES.includes(field.category) &&
+          !PROFILE_PREFERENCE_CATEGORIES.includes(field.category) &&
+          !DOCUMENT_CATEGORIES.includes(field.category) &&
+          !SCREENING_QUESTION_CATEGORIES.includes(field.category)))
   );
+
+  const hasJobInfo =
+    Boolean(props.scan?.jobInfoExtracted) ||
+    Boolean(props.scan?.jobInfo.title) ||
+    (props.scan?.jobInfo.requirements.length ?? 0) > 0 ||
+    (props.scan?.jobInfo.responsibilities.length ?? 0) > 0;
 
   return (
     <div className="stack">
@@ -80,11 +106,17 @@ export function DetectedFieldsTab(props: Props) {
             <p className="eyebrow">Current page</p>
             <h2>{props.scan ? recommendationLabel(props.scan.pageType) : "Not scanned yet"}</h2>
           </div>
-          {props.scan ? <Badge tone="blue">{props.scan.adapterName}</Badge> : null}
+          <div className="tag-row">
+            {props.scan ? <Badge tone="blue">{props.scan.adapterName}</Badge> : null}
+            {props.scan?.jobInfoExtracted ? <Badge tone="good">Extracted</Badge> : null}
+          </div>
         </div>
         <div className="button-row">
           <Button variant="primary" loading={props.loading} onClick={props.onScan}>
-            <ScanSearch size={16} /> {props.scan ? "Rescan Page" : "Scan Page"}
+            <ScanSearch size={16} /> {props.scan?.fields.length ? "Rescan Page" : "Scan Page"}
+          </Button>
+          <Button loading={props.loading} onClick={props.onExtractJobInfo}>
+            <FileSearch size={16} /> Extract Job Info
           </Button>
           <label className="toggle">
             <input
@@ -103,10 +135,21 @@ export function DetectedFieldsTab(props: Props) {
         ) : null}
       </Card>
 
-      {props.scan ? (
+      {hasJobInfo ? (
         <>
           <JobCard {...props} />
+          {props.cvSources.length ? <CvRecommendationCard {...props} /> : null}
           <FitCard fit={props.fit} />
+        </>
+      ) : null}
+
+      {props.scan ? (
+        <>
+          {props.scan.jobInfoExtracted && fields.length === 0 ? (
+            <Notice tone="success">
+              Job info is extracted and saved for this role. Click Apply on the page, then Scan Page to detect form fields.
+            </Notice>
+          ) : null}
           {fields.length === 0 ? (
             <EmptyState
               title="No fields found"
@@ -173,7 +216,7 @@ export function DetectedFieldsTab(props: Props) {
           </FieldGroup>
           <FieldGroup
             title="Factual / Preference Fields"
-            description="ApplyOS uses only values you saved in Profile."
+            description="Salary, relocation, and start date from your saved profile."
             fields={factual}
           >
             {(field) => {
@@ -186,6 +229,26 @@ export function DetectedFieldsTab(props: Props) {
                 />
               );
             }}
+          </FieldGroup>
+          <FieldGroup
+            title="Screening & Compliance"
+            description="Work authorization, location, timezone, and voluntary survey answers. New answers are saved automatically when you fill them on the page."
+            fields={screening}
+          >
+            {(field) => (
+              <ApplicationQuestion
+                field={field}
+                answers={props.answers}
+                suggestion={props.suggestions[field.fieldId]}
+                settings={props.settings}
+                fit={props.fit}
+                onInsert={props.onInsert}
+                onSmartMatch={props.onSmartMatch}
+                onSaveCurrentValue={props.onSaveCurrentValue}
+                onSaveSuggestion={props.onSaveSuggestion}
+                onSkip={props.onSkip}
+              />
+            )}
           </FieldGroup>
           <FieldGroup
             title="Documents"
@@ -221,7 +284,7 @@ export function DetectedFieldsTab(props: Props) {
           </FieldGroup>
           <FieldGroup
             title="Manual Review"
-            description="Sensitive, unclear, disabled, and unsupported fields are never autofilled."
+            description="Unclear or unsupported fields are never autofilled."
             fields={manual}
           >
             {(field) => (
@@ -244,6 +307,69 @@ export function DetectedFieldsTab(props: Props) {
   );
 }
 
+function CvRecommendationCard(props: Props) {
+  const recommendation = props.cvRecommendation;
+  if (!recommendation) return null;
+
+  const recommended = props.cvSources.find((cv) => cv.id === recommendation.recommendedCvId);
+
+  return (
+    <Card className="fit-card">
+      <div className="card-header">
+        <div>
+          <p className="eyebrow">CV to upload</p>
+          <h2>{recommendation.recommendedFileName}</h2>
+          {recommended?.positioningLabel ? <p className="subtle">{recommended.positioningLabel}</p> : null}
+        </div>
+        <Badge tone="good">{Math.round(recommendation.confidence * 100)}% fit</Badge>
+      </div>
+      <Notice tone="success">
+        <strong>{recommendation.method === "openrouter" ? "AI recommendation" : "Local match"}</strong>
+        <p>{recommendation.reason}</p>
+        {recommended?.whenToUse ? <p>{recommended.whenToUse}</p> : null}
+      </Notice>
+      {recommended?.localPathHint ? (
+        <p className="subtle">
+          <FileText size={14} style={{ display: "inline", verticalAlign: "text-bottom" }} /> Upload from:{" "}
+          {recommended.localPathHint}
+        </p>
+      ) : null}
+      {recommendation.alternatives.length ? (
+        <div className="evidence">
+          <strong>Alternatives</strong>
+          <ul>
+            {recommendation.alternatives.map((alt) => (
+              <li key={alt.cvId}>
+                <strong>{alt.fileName}</strong> — {alt.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="button-row">
+        <Button
+          onClick={() => navigator.clipboard.writeText(recommendation.recommendedFileName)}
+        >
+          Copy filename
+        </Button>
+        {recommended?.localPathHint ? (
+          <Button onClick={() => navigator.clipboard.writeText(recommended.localPathHint!)}>
+            Copy local path
+          </Button>
+        ) : null}
+        {!props.settings.localOnlyMode && props.settings.openRouterApiKey ? (
+          <Button loading={props.loading} onClick={props.onRecommendCvWithAi}>
+            <Sparkles size={16} /> Refine with AI
+          </Button>
+        ) : null}
+      </div>
+      <p className="subtle">
+        ApplyOS cannot upload files for you. Use the recommended PDF in the resume field on the page.
+      </p>
+    </Card>
+  );
+}
+
 function JobCard(props: Props) {
   const job = props.scan!.jobInfo;
   const hasJob = job.title || job.company || job.description;
@@ -257,6 +383,23 @@ function JobCard(props: Props) {
         </div>
       </div>
       {!hasJob ? <Notice tone="warning">No job information was found on this page.</Notice> : null}
+      {props.scan?.jobInfoExtracted ? (
+        <Notice tone="success">
+          Extracted — requirements and responsibilities are stored for this role and will be sent to the model.
+        </Notice>
+      ) : null}
+      {props.scan?.jobInfoFromListing && !props.scan?.jobInfoExtracted ? (
+        <Notice tone="info">
+          Requirements loaded from the job listing page
+          {job.listingSourceUrl ? ` (${job.listingSourceUrl.replace(/^https?:\/\//, "")})` : ""}.
+        </Notice>
+      ) : null}
+      {job.requirements.length || job.responsibilities.length ? (
+        <p className="subtle">
+          {job.requirements.length} requirements · {job.responsibilities.length} responsibilities
+          {job.niceToHave.length ? ` · ${job.niceToHave.length} nice-to-have` : ""}
+        </p>
+      ) : null}
       <div className="button-row">
         <Button onClick={() => props.onSaveJob("saved")}>
           <Save size={16} /> Save Job

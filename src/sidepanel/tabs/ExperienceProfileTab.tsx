@@ -2,6 +2,7 @@ import React from "react";
 import { Download, FileUp, Sparkles, Trash2, Upload } from "lucide-react";
 import type { CvSource, ExperienceDatabase, ExperienceProfile, Settings } from "../../shared/types";
 import { Button, Card, Field, Notice } from "../components/UI";
+import { CvLibraryCard } from "./CvLibraryCard";
 import { ExperienceDatabaseCard } from "./ExperienceDatabaseCard";
 
 interface Props {
@@ -22,6 +23,8 @@ interface Props {
   onImportDatabaseMarkdown: (file: File) => void;
   onExportDatabaseMarkdown: () => void;
   onClearCvSources: () => void;
+  onSaveCv: (cv: CvSource) => Promise<void>;
+  onSummarizeCv: (cv: CvSource) => Promise<void>;
 }
 
 export function ExperienceProfileTab(props: Props) {
@@ -87,6 +90,14 @@ export function ExperienceProfileTab(props: Props) {
           <Button variant="danger" onClick={props.onDelete}><Trash2 size={16} /> Delete</Button>
         </div>
       </Card>
+      <CvLibraryCard
+        cvSources={props.cvSources}
+        settings={props.settings}
+        loading={props.loading}
+        onImportCvs={props.onImportCvs}
+        onSaveCv={props.onSaveCv}
+        onSummarizeCv={props.onSummarizeCv}
+      />
       <ExperienceDatabaseCard
         database={props.database}
         cvSources={props.cvSources}

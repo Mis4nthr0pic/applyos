@@ -1,7 +1,15 @@
 import React from "react";
 import { Download, Trash2, Upload } from "lucide-react";
+import {
+  CUSTOM_OPENROUTER_MODEL,
+  DEFAULT_OPENROUTER_MODEL,
+  findOpenRouterModel,
+  isKnownOpenRouterModel,
+  OPENROUTER_MODEL_GROUPS
+} from "../../shared/openRouterModels";
 import type { Settings } from "../../shared/types";
 import { Button, Card, Field, Notice } from "../components/UI";
+import { AiPromptsCard } from "./AiPromptsCard";
 
 export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClear }: { settings: Settings; onSave: (settings: Settings) => void; onExportAll: () => void; onImportAll: (file: File) => void; onClear: () => void }) {
   const [draft, setDraft] = React.useState(settings);
@@ -13,10 +21,14 @@ export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClea
         <Notice tone="success">Local-only mode keeps CV text, profiles, answers, jobs, queued URLs, and scans on this device. ApplyOS has no backend and no telemetry.</Notice>
         <Toggle label="Local-only mode" checked={draft.localOnlyMode} onChange={(value) => setDraft({ ...draft, localOnlyMode: value })} />
         <Field label="OpenRouter API key" hint="Stored locally. No hardcoded secrets."><input type="password" value={draft.openRouterApiKey ?? ""} onChange={(e) => setDraft({ ...draft, openRouterApiKey: e.target.value })} /></Field>
-        <Field label="OpenRouter model"><input value={draft.openRouterModel ?? ""} onChange={(e) => setDraft({ ...draft, openRouterModel: e.target.value })} /></Field>
+        <OpenRouterModelField
+          model={draft.openRouterModel}
+          onChange={(openRouterModel) => setDraft({ ...draft, openRouterModel })}
+        />
         <Toggle label="Smart Match enabled" checked={draft.smartMatchEnabled} onChange={(value) => setDraft({ ...draft, smartMatchEnabled: value })} />
         <Toggle label="Auto-generate from Experience Profile" checked={draft.generateFromExperienceEnabled} onChange={(value) => setDraft({ ...draft, generateFromExperienceEnabled: value })} />
         <Toggle label="Use optimized multi-CV database for answers" checked={draft.useOptimizedExperienceDatabase} onChange={(value) => setDraft({ ...draft, useOptimizedExperienceDatabase: value })} hint="When enabled, Generate All Answers sends the merged markdown database (Experience tab) with the humanizer prompt instead of the single structured profile JSON." />
+        <Toggle label="Auto-save new screening answers" checked={draft.autoSaveNewAnswers} onChange={(value) => setDraft({ ...draft, autoSaveNewAnswers: value })} hint="When you answer work authorization, timezone, location, or voluntary survey questions on the page, ApplyOS saves them to your Answer Bank for reuse." />
         <Toggle label="Show data before sending" checked={draft.showDataBeforeSending} onChange={(value) => setDraft({ ...draft, showDataBeforeSending: value })} />
         <Toggle label="Allow raw CV for extraction" checked={draft.allowRawCvForExtraction} onChange={(value) => setDraft({ ...draft, allowRawCvForExtraction: value })} />
         <Field label={`Job fit threshold: ${draft.jobFitThreshold}%`}><input type="range" min="0" max="100" value={draft.jobFitThreshold} onChange={(e) => setDraft({ ...draft, jobFitThreshold: Number(e.target.value) })} /></Field>
@@ -30,7 +42,12 @@ export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClea
         <Toggle label="Auto-scan after opening (prompt only)" checked={draft.queueAutoScanAfterOpening} onChange={(value) => setDraft({ ...draft, queueAutoScanAfterOpening: value })} />
         <Toggle label="Queue dev mode: allow localhost URLs" checked={draft.queueDevMode} onChange={(value) => setDraft({ ...draft, queueDevMode: value })} />
         <Button variant="primary" onClick={() => onSave({ ...draft, id: "default" })}>Save Settings</Button>
+        <Notice tone="info">Prompt edits above are part of settings. Click Save Settings to persist them.</Notice>
       </Card>
+      <AiPromptsCard
+        settings={draft}
+        onChange={(next) => setDraft(next)}
+      />
       <Card>
         <h2>Local data</h2>
         <p>Export a complete local backup or clear this device.</p>
@@ -41,6 +58,58 @@ export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClea
         </div>
       </Card>
     </div>
+  );
+}
+
+function OpenRouterModelField({
+  model,
+  onChange
+}: {
+  model?: string;
+  onChange: (model: string) => void;
+}) {
+  const known = isKnownOpenRouterModel(model);
+  const selected = known ? model! : CUSTOM_OPENROUTER_MODEL;
+  const active = findOpenRouterModel(known ? model : undefined);
+
+  return (
+    <Field
+      label="OpenRouter model"
+      hint={active?.hint ?? "Pick a preset or enter a custom OpenRouter model ID."}
+    >
+      <select
+        value={selected}
+        onChange={(event) => {
+          const value = event.target.value;
+          if (value === CUSTOM_OPENROUTER_MODEL) {
+            onChange(known ? model! : DEFAULT_OPENROUTER_MODEL);
+            return;
+          }
+          onChange(value);
+        }}
+      >
+        {OPENROUTER_MODEL_GROUPS.map((group) => (
+          <optgroup key={group.provider} label={group.provider}>
+            {group.models.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value={CUSTOM_OPENROUTER_MODEL}>Custom model ID…</option>
+      </select>
+      {selected === CUSTOM_OPENROUTER_MODEL ? (
+        <input
+          style={{ marginTop: 8 }}
+          value={model ?? ""}
+          placeholder="provider/model-name"
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : active ? (
+        <p className="subtle" style={{ marginTop: 8 }}>{active.id}</p>
+      ) : null}
+    </Field>
   );
 }
 

@@ -1,4 +1,11 @@
 import { ANSWER_WRITING_SYSTEM_PROMPT } from "./answerWritingPrompt";
+import {
+  IMPROVE_JOB_SYSTEM_PROMPT,
+  PARSE_CV_SYSTEM_PROMPT,
+  SMART_MATCH_SYSTEM_PROMPT,
+  resolvePrompt
+} from "./prompts";
+import { resolveOpenRouterModel } from "../shared/openRouterModels";
 import type {
   ExperienceProfile,
   JobInfo,
@@ -42,7 +49,7 @@ export async function callOpenRouterJson(
       "X-Title": "ApplyOS"
     },
     body: JSON.stringify({
-      model: settings.openRouterModel || "openai/gpt-4o-mini",
+      model: resolveOpenRouterModel(settings.openRouterModel),
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
@@ -71,7 +78,7 @@ export async function parseCvWithOpenRouter(
 ): Promise<Partial<ExperienceProfile>> {
   return (await callOpenRouterJson(
     settings,
-    "Extract structured experience from this CV/resume. Do not add, infer, or embellish anything not explicitly stated. Only include information directly supported by the CV text. Return JSON only.",
+    PARSE_CV_SYSTEM_PROMPT,
     `CV:\n${cvText}\n\nReturn:\n${JSON.stringify({
       skills: [],
       companies: [],
@@ -108,7 +115,7 @@ export async function improveJobExtraction(
 ): Promise<Partial<JobInfo>> {
   return (await callOpenRouterJson(
     settings,
-    "Extract structured job information from the job description. Return only JSON. Do not invent requirements. Only include what is explicitly stated.",
+    IMPROVE_JOB_SYSTEM_PROMPT,
     `Job description:\n${description}\n\nReturn:\n${JSON.stringify({
       title: "",
       company: "",
@@ -144,7 +151,7 @@ export async function smartMatchAnswer(
   }));
   return (await callOpenRouterJson(
     settings,
-    "You are matching job application questions to saved answer-bank entries. Do not generate a new answer. Do not rewrite the answer. Only classify and select the best saved answer. Return JSON only.",
+    SMART_MATCH_SYSTEM_PROMPT,
     `New question:\n${question}\n\nSaved candidates:\n${JSON.stringify(candidatePayload)}\n\nReturn:\n${JSON.stringify({
       bestMatchId: null,
       category: "",
@@ -186,7 +193,7 @@ export async function suggestAllAnswersFromExperience(
 
   const payload = (await callOpenRouterJson(
     settings,
-    ANSWER_WRITING_SYSTEM_PROMPT,
+    resolvePrompt(settings, "answerWriting") || ANSWER_WRITING_SYSTEM_PROMPT,
     `Answer every application question below in one batch.
 
 ${experienceSection}

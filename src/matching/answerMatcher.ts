@@ -1,5 +1,6 @@
 import Fuse, { type FuseResult } from "fuse.js";
 import type { DetectedField, SavedAnswer } from "../shared/types";
+import { normalizeText } from "./normalize";
 
 export interface AnswerMatch {
   answer: SavedAnswer;
@@ -33,4 +34,27 @@ export function findAnswerMatches(
       answer: result.item,
       confidence: Math.max(0, Math.min(1, 1 - (result.score ?? 1)))
     }));
+}
+
+export function hasCloseAnswerMatch(
+  field: DetectedField,
+  answers: SavedAnswer[],
+  threshold = 0.82
+): boolean {
+  const matches = findAnswerMatches(field, answers, 1);
+  return matches.length > 0 && matches[0].confidence >= threshold;
+}
+
+export function hasExactSavedAnswer(
+  answers: SavedAnswer[],
+  question: string,
+  answer: string
+): boolean {
+  const normalizedQuestion = normalizeText(question);
+  const normalizedAnswer = answer.trim().toLowerCase();
+  return answers.some(
+    (saved) =>
+      saved.normalizedQuestion === normalizedQuestion &&
+      saved.answer.trim().toLowerCase() === normalizedAnswer
+  );
 }

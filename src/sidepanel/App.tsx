@@ -10,12 +10,14 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { buildOptimizedExperienceDatabase } from "../ai/buildExperienceDatabase";
+import { summarizeCvWithOpenRouter } from "../ai/cvSummarizer";
 import {
   improveJobExtraction,
   parseCvWithOpenRouter,
   smartMatchAnswer,
   suggestAllAnswersFromExperience
 } from "../ai/openrouter";
+import { recommendCvWithOpenRouter } from "../ai/recommendCvOpenRouter";
 import {
   clearAllData,
   db,
@@ -23,7 +25,13 @@ import {
   importAllData,
   initializeDatabase
 } from "../db";
+import { mergeWithStoredJobInfo, saveJobListingCache } from "../db/jobListingCache";
+import type { ExtractedJobPayload } from "../adapters/extractJob";
+import { isThinJobInfo, jobListingCacheKey } from "../adapters/listingResolver";
 import { findRelevantExperience } from "../matching/experienceEvidence";
+import { hasCloseAnswerMatch, hasExactSavedAnswer } from "../matching/answerMatcher";
+import { enrichCvSourceFromCatalog, heuristicCvSummary, recommendCvLocally } from "../matching/recommendCv";
+import type { CvRecommendation } from "../matching/recommendCv";
 import { normalizeText } from "../matching/normalize";
 import { extractTextFromFile, parseExperienceLocally } from "../parsers/resume";
 import { calculateJobFit } from "../scoring/jobFit";
@@ -93,6 +101,7 @@ export function App() {
   const [currentQueueId, setCurrentQueueId] = React.useState<string>();
   const [scan, setScan] = React.useState<ScanResult>();
   const [fit, setFit] = React.useState<JobFitScore>();
+  const [cvRecommendation, setCvRecommendation] = React.useState<CvRecommendation>();
   const [suggestions, setSuggestions] = React.useState<Record<string, AnswerSuggestion>>({});
   const [watchDynamic, setWatchDynamic] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
@@ -128,7 +137,13 @@ export function App() {
   React.useEffect(() => {
     const runtime = typeof chrome !== "undefined" ? chrome.runtime : undefined;
     if (!runtime?.onMessage) return;
-    const listener = (message: { type?: string; fields?: DetectedField[]; status?: string }) => {
+    const listener = (message: {
+      type?: string;
+      fields?: DetectedField[];
+      status?: string;
+      field?: DetectedField;
+      value?: string;
+    }) => {
       if (message.type === "APPLYOS_FIELDS_CHANGED" && message.fields) {
         setScan((current) => current ? { ...current, fields: message.fields!, watching: true } : current);
         setNotice({ tone: "info", text: "Dynamic fields changed. The detected field list has been updated." });
@@ -136,6 +151,11 @@ export function App() {
       if (message.type === "APPLYOS_WATCH_STOPPED") {
         setScan((current) => current ? { ...current, watching: false } : current);
         setNotice({ tone: "info", text: message.status || "Dynamic field watch stopped." });
+      }
+      if (message.type === "APPLYOS_FIELD_ANSWERED" && message.field && message.value) {
+        handleAutoSaveFieldAnswer(message.field, message.value).catch((error) =>
+          setNotice({ tone: "danger", text: getErrorMessage(error) })
+        );
       }
     };
     runtime.onMessage.addListener(listener);
@@ -146,6 +166,14 @@ export function App() {
     if (scan) setFit(calculateJobFit(scan.jobInfo, experience));
   }, [scan, experience]);
 
+  React.useEffect(() => {
+    if (scan?.jobInfo && cvSources.length) {
+      setCvRecommendation(recommendCvLocally(scan.jobInfo, cvSources));
+    } else {
+      setCvRecommendation(undefined);
+    }
+  }, [scan?.jobInfo, cvSources]);
+
   async function handleScan() {
     setLoading(true);
     setNotice(undefined);
@@ -155,23 +183,98 @@ export function App() {
         watchDynamicFields: watchDynamic
       });
       if ("error" in result) throw new Error(result.error);
-      const nextFit = calculateJobFit(result.jobInfo, experience);
-      setScan(result);
+
+      const listingKey = jobListingCacheKey(result.context.url);
+      const merged = await mergeWithStoredJobInfo(listingKey, result.jobInfo);
+      const nextResult: ScanResult = {
+        ...result,
+        jobInfo: merged.jobInfo,
+        jobInfoExtracted: merged.fromStored || result.jobInfoExtracted,
+        jobInfoFromListing: merged.fromStored || result.jobInfoFromListing
+      };
+
+      if (!isThinJobInfo(nextResult.jobInfo)) {
+        await saveJobListingCache({
+          listingKey,
+          listingUrl: merged.fromStored
+            ? merged.jobInfo.listingSourceUrl ?? listingKey
+            : listingKey,
+          extractedFromUrl: nextResult.context.url,
+          jobInfo: nextResult.jobInfo,
+          platform: nextResult.platform,
+          pageType: nextResult.pageType
+        });
+        nextResult.jobInfoExtracted = true;
+      }
+
+      const nextFit = calculateJobFit(nextResult.jobInfo, experience);
+      setScan(nextResult);
       setFit(nextFit);
       setSuggestions({});
       await db.scanHistory.put({
         id: crypto.randomUUID(),
-        url: result.context.url,
-        pageType: result.pageType,
-        platform: result.platform,
-        fieldCount: result.fields.length,
-        jobTitle: result.jobInfo.title,
+        url: nextResult.context.url,
+        pageType: nextResult.pageType,
+        platform: nextResult.platform,
+        fieldCount: nextResult.fields.length,
+        jobTitle: nextResult.jobInfo.title,
         scannedAt: new Date().toISOString()
       });
-      await updateQueueFromScan(result, nextFit);
-      setNotice({ tone: "success", text: `Scanned ${result.fields.length} fields with the ${result.adapterName} adapter.` });
+      await updateQueueFromScan(nextResult, nextFit);
+      const extractedNote = nextResult.jobInfoExtracted ? " Stored job info is attached for the model." : "";
+      setNotice({
+        tone: "success",
+        text: `Scanned ${nextResult.fields.length} fields with the ${nextResult.adapterName} adapter.${extractedNote}`
+      });
     } catch (error) {
       await markCurrentQueueError(getErrorMessage(error));
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleExtractJobInfo() {
+    setLoading(true);
+    setNotice(undefined);
+    try {
+      const payload = await sendToActiveTab<ExtractedJobPayload | { error: string }>({
+        type: "EXTRACT_JOB_INFO"
+      });
+      if ("error" in payload) throw new Error(payload.error);
+      if (isThinJobInfo(payload.jobInfo)) {
+        throw new Error("No job description was found on this page. Open the listing or careers page first.");
+      }
+
+      await saveJobListingCache({
+        listingKey: payload.listingKey,
+        listingUrl: payload.listingUrl,
+        extractedFromUrl: payload.context.url,
+        jobInfo: payload.jobInfo,
+        platform: payload.platform,
+        pageType: payload.pageType
+      });
+
+      const nextScan: ScanResult = {
+        context: payload.context,
+        pageType: payload.pageType,
+        platform: payload.platform,
+        adapterName: payload.adapterName,
+        jobInfo: payload.jobInfo,
+        fields: scan?.fields ?? [],
+        watching: scan?.watching ?? false,
+        jobInfoExtracted: true,
+        jobInfoFromListing: payload.jobInfoFromListing,
+        message:
+          "Job info extracted. Click Apply on the page, then Scan Page to detect form fields. The model will receive both."
+      };
+      setScan(nextScan);
+      setFit(calculateJobFit(payload.jobInfo, experience));
+      setNotice({
+        tone: "success",
+        text: `Extracted ${payload.jobInfo.requirements.length} requirements and ${payload.jobInfo.responsibilities.length} responsibilities. Status: extracted.`
+      });
+    } catch (error) {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     } finally {
       setLoading(false);
@@ -353,20 +456,89 @@ export function App() {
     setLoading(true);
     try {
       const timestamp = new Date().toISOString();
+      const existing = await db.cvSources.toArray();
       const items: CvSource[] = [];
+
       for (const file of Array.from(files)) {
         const extracted = await extractTextFromFile(file);
+        const catalogFields = enrichCvSourceFromCatalog(file.name);
+        const heuristicFields = heuristicCvSummary(extracted.text, file.name);
+        const fileName = catalogFields.fileName || file.name;
+        const prior = existing.find((source) => source.fileName.toLowerCase() === fileName.toLowerCase());
+
         items.push({
-          id: crypto.randomUUID(),
-          fileName: file.name,
+          id: prior?.id ?? crypto.randomUUID(),
+          fileName,
           rawText: extracted.text,
           sourceType: extracted.sourceType,
-          importedAt: timestamp
+          importedAt: prior?.importedAt ?? timestamp,
+          localPathHint: prior?.localPathHint,
+          ...heuristicFields,
+          ...catalogFields
         });
       }
+
       await db.cvSources.bulkPut(items);
       await refresh();
-      setNotice({ tone: "success", text: `Imported ${items.length} CV source file(s) locally.` });
+      setNotice({ tone: "success", text: `Imported ${items.length} CV source file(s) with summaries.` });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveCvSource(cv: CvSource) {
+    await db.cvSources.put(cv);
+    await refresh();
+    setNotice({ tone: "success", text: `Saved summary for ${cv.fileName}.` });
+  }
+
+  async function summarizeCvSource(cv: CvSource) {
+    if (!cv.rawText.trim()) throw new Error("This CV has no extracted text to summarize.");
+    if (
+      !confirmData(
+        `OpenRouter will summarize ${cv.fileName} to update the CV library entry.`,
+        cv.rawText.slice(0, 2000)
+      )
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const summary = await summarizeCvWithOpenRouter(cv.fileName, cv.rawText, settings);
+      await db.cvSources.put({ ...cv, ...summary });
+      await refresh();
+      setNotice({ tone: "success", text: `Regenerated summary for ${cv.fileName}.` });
+    } catch (error) {
+      setNotice({ tone: "danger", text: getErrorMessage(error) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRecommendCvWithAi() {
+    if (!scan?.jobInfo || !cvSources.length) return;
+    if (
+      !confirmData(
+        "OpenRouter will compare this job against your CV library summaries.",
+        JSON.stringify(
+          {
+            jobTitle: scan.jobInfo.title,
+            cvFiles: cvSources.map((cv) => cv.fileName)
+          },
+          null,
+          2
+        )
+      )
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const recommendation = await recommendCvWithOpenRouter(scan.jobInfo, cvSources, settings);
+      setCvRecommendation(recommendation);
+      setNotice({ tone: "success", text: `Recommended CV: ${recommendation.recommendedFileName}` });
     } catch (error) {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     } finally {
@@ -456,6 +628,38 @@ export function App() {
     } catch (error) {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     }
+  }
+
+  async function handleAutoSaveFieldAnswer(field: DetectedField, value: string) {
+    const currentSettings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
+    if (!currentSettings.autoSaveNewAnswers) return;
+
+    const existing = await db.savedAnswers.toArray();
+    if (hasCloseAnswerMatch(field, existing) || hasExactSavedAnswer(existing, normalizeText(field.label), value)) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    await db.savedAnswers.put({
+      id: crypto.randomUUID(),
+      title: field.label.slice(0, 80),
+      category: answerCategory(field.category),
+      originalQuestion: field.label,
+      normalizedQuestion: normalizeText(field.label),
+      answer: value,
+      tags: ["auto_saved"],
+      roleTypes: [],
+      companiesUsedFor: scan?.jobInfo.company ? [scan.jobInfo.company] : [],
+      source: "manual",
+      timesUsed: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    await refresh();
+    setNotice({
+      tone: "success",
+      text: `Saved "${value}" for a screening question to your Answer Bank.`
+    });
   }
 
   async function handleSaveCurrentValue(field: DetectedField) {
@@ -767,7 +971,33 @@ export function App() {
   }
 
   const tabContent = {
-    detected: <DetectedFieldsTab scan={scan} fit={fit} answers={answers} userProfile={userProfile} settings={settings} suggestions={suggestions} loading={loading} watchDynamic={watchDynamic} onWatchDynamic={handleWatchDynamic} onScan={handleScan} onInsert={handleInsert} onAutofillSafe={handleAutofillSafe} onSaveJob={saveTrackedJob} onSmartMatch={handleSmartMatch} onSuggestAllAnswers={handleSuggestAllAnswers} onSaveCurrentValue={handleSaveCurrentValue} onSaveSuggestion={handleSaveSuggestion} onSkip={handleSkip} onImproveJob={handleImproveJob} />,
+    detected: (
+      <DetectedFieldsTab
+        scan={scan}
+        fit={fit}
+        cvSources={cvSources}
+        cvRecommendation={cvRecommendation}
+        answers={answers}
+        userProfile={userProfile}
+        settings={settings}
+        suggestions={suggestions}
+        loading={loading}
+        watchDynamic={watchDynamic}
+        onWatchDynamic={handleWatchDynamic}
+        onScan={handleScan}
+        onExtractJobInfo={handleExtractJobInfo}
+        onInsert={handleInsert}
+        onAutofillSafe={handleAutofillSafe}
+        onSaveJob={saveTrackedJob}
+        onSmartMatch={handleSmartMatch}
+        onSuggestAllAnswers={handleSuggestAllAnswers}
+        onSaveCurrentValue={handleSaveCurrentValue}
+        onSaveSuggestion={handleSaveSuggestion}
+        onSkip={handleSkip}
+        onImproveJob={handleImproveJob}
+        onRecommendCvWithAi={handleRecommendCvWithAi}
+      />
+    ),
     queue: <JobQueueTab items={queue} settings={settings} currentQueueId={currentQueueId} onImportText={importQueueText} onOpen={openQueueItem} onScan={handleScan} onStatus={updateQueueStatus} onRemove={async (id) => { await db.queuedJobUrls.delete(id); if (currentQueueId === id) setCurrentQueueId(undefined); await refresh(); }} onUpdateNotes={updateQueueNotes} onStartReview={startQueueReview} onNext={() => moveQueue(1)} onPrevious={() => moveQueue(-1)} onClearCompleted={async () => { if (window.confirm("Clear completed queue items?")) { await db.queuedJobUrls.where("status").anyOf(["saved", "applied", "skipped", "not_relevant"]).delete(); await refresh(); } }} onClearQueue={async () => { if (window.confirm("Clear the entire job URL queue?")) { await db.queuedJobUrls.clear(); setCurrentQueueId(undefined); await refresh(); } }} onExportJson={() => downloadJson("applyos-job-queue.json", queue)} onExportCsv={() => downloadText("applyos-job-queue.csv", queueToCsv(queue), "text/csv")} onImportJson={importQueueJson} />,
     answers: <AnswerBankTab answers={answers} onSave={async (answer) => { await db.savedAnswers.put(answer); await refresh(); }} onDelete={async (id) => { if (window.confirm("Delete this saved answer?")) { await db.savedAnswers.delete(id); await refresh(); } }} onExport={() => downloadJson("applyos-answer-bank.json", answers)} onImport={importAnswers} />,
     experience: (
@@ -797,6 +1027,8 @@ export function App() {
         onImportDatabaseMarkdown={importExperienceDatabaseMarkdown}
         onExportDatabaseMarkdown={exportExperienceDatabaseMarkdown}
         onClearCvSources={clearCvSources}
+        onSaveCv={saveCvSource}
+        onSummarizeCv={summarizeCvSource}
       />
     ),
     profile: <ProfileTab profile={userProfile} onSave={async (profile) => { await db.userProfile.put({ ...profile, id: "default" }); await refresh(); setNotice({ tone: "success", text: "Profile saved locally." }); }} />,
@@ -896,7 +1128,15 @@ function profileValue(field: DetectedField, profile?: UserProfile): string | und
 }
 
 function answerCategory(category?: DetectedField["category"]): SavedAnswer["category"] {
-  if (category === "work_authorization") return "work_auth";
-  if (category && ["why_company", "why_role", "about_me", "hard_problem", "leadership", "conflict", "salary", "relocation", "visa_sponsorship", "portfolio"].includes(category)) return category as SavedAnswer["category"];
+  if (category === "work_authorization" || category === "legal_authorization") return "work_auth";
+  if (category === "visa_sponsorship") return "visa_sponsorship";
+  if (category === "salary") return "salary";
+  if (category === "relocation") return "relocation";
+  if (
+    category &&
+    ["why_company", "why_role", "about_me", "hard_problem", "leadership", "conflict", "portfolio"].includes(category)
+  ) {
+    return category as SavedAnswer["category"];
+  }
   return "custom";
 }

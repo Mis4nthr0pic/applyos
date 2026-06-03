@@ -2,6 +2,12 @@ import type { DetectedField, FieldCategory, FieldType, InsertResult } from "../s
 import { normalizeText, uniqueStrings } from "./text";
 import { isElementVisible } from "./pageContext";
 import { classifyField } from "./fieldClassifier";
+import {
+  extractButtonChoiceGroups,
+  insertChoiceGroupValue,
+  readChoiceGroupValue,
+  resolveChoiceGroupRoot
+} from "./choiceGroups";
 
 const FIELD_SELECTOR =
   "textarea, input[type='text'], input[type='email'], input[type='url'], input[type='tel'], input[type='number'], input[type='checkbox'], input[type='radio'], input[type='file'], input:not([type]), select, [contenteditable='true']";
@@ -12,13 +18,23 @@ let dependencyParents: FieldCategory[] = [];
 export function extractDetectedFields(platform: string): DetectedField[] {
   const fields = Array.from(document.querySelectorAll<HTMLElement>(FIELD_SELECTOR));
   const seen = new Set<string>();
+  const processedRadioGroups = new Set<string>();
   const result: DetectedField[] = [];
 
   for (const element of fields) {
     if (shouldIgnoreField(element)) continue;
+
+    if (element instanceof HTMLInputElement && element.type === "radio") {
+      if (!element.name || processedRadioGroups.has(element.name)) continue;
+      processedRadioGroups.add(element.name);
+    }
+
     const fieldId = getOrCreateFieldId(element);
     const selectorHint = createSelectorHint(element, fieldId);
-    const label = extractFieldLabel(element);
+    const label =
+      element instanceof HTMLInputElement && element.type === "radio"
+        ? extractRadioGroupLabel(element)
+        : extractFieldLabel(element);
     const fieldType = getFieldType(element);
     const normalizedLabel = normalizeText(label);
     const category = classifyField(label, fieldType);
@@ -49,6 +65,9 @@ export function extractDetectedFields(platform: string): DetectedField[] {
     });
     knownFieldIds.add(fieldId);
   }
+
+  extractButtonChoiceGroups(platform, seen, result);
+  result.forEach((field) => knownFieldIds.add(field.fieldId));
   return result;
 }
 
@@ -79,7 +98,11 @@ function inferDependencies(category: FieldCategory, isDynamic: boolean): string[
 }
 
 function shouldIgnoreField(element: HTMLElement): boolean {
-  if (!isElementVisible(element)) return true;
+  if (element instanceof HTMLInputElement && element.type === "radio") {
+    if (!isRadioFieldAccessible(element)) return true;
+  } else if (!isElementVisible(element)) {
+    return true;
+  }
   if (element.getAttribute("aria-hidden") === "true") return true;
   if (element instanceof HTMLInputElement && ["hidden", "password", "submit", "button", "reset"].includes(element.type)) {
     return true;
@@ -89,7 +112,37 @@ function shouldIgnoreField(element: HTMLElement): boolean {
   return rect.width < 3 || rect.height < 3 || (!label && rect.left < -500);
 }
 
+function isRadioFieldAccessible(radio: HTMLInputElement): boolean {
+  if (isElementVisible(radio)) return true;
+  if (radio.id) {
+    const label = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(radio.id)}"]`);
+    if (label && isElementVisible(label)) return true;
+  }
+  const parentLabel = radio.closest("label");
+  if (parentLabel && isElementVisible(parentLabel)) return true;
+  const group = radio.closest('[role="radiogroup"], fieldset, [class*="question"], [class*="field"]');
+  if (group instanceof HTMLElement && isElementVisible(group)) {
+    const rect = group.getBoundingClientRect();
+    return rect.width > 20 && rect.height > 20;
+  }
+  return false;
+}
+
 function getOrCreateFieldId(element: HTMLElement): string {
+  if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
+    const existing = document.querySelector<HTMLInputElement>(
+      `input[type="radio"][name="${CSS.escape(element.name)}"][data-applyos-field-id]`
+    );
+    if (existing?.dataset.applyosFieldId) return existing.dataset.applyosFieldId;
+    const fieldId = `applyos-radio-${hashString(element.name)}`;
+    document
+      .querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
+      .forEach((radio) => {
+        radio.dataset.applyosFieldId = fieldId;
+      });
+    return fieldId;
+  }
+
   const existing = element.dataset.applyosFieldId;
   if (existing) return existing;
   const base = [
@@ -102,11 +155,7 @@ function getOrCreateFieldId(element: HTMLElement): string {
   ]
     .filter(Boolean)
     .join("|");
-  const stableBase =
-    element instanceof HTMLInputElement && element.type === "radio" && element.name
-      ? base
-      : `${base}|${domIndex(element)}`;
-  const fieldId = `applyos-${hashString(stableBase || `${element.tagName}-${domIndex(element)}`)}`;
+  const fieldId = `applyos-${hashString(base || `${element.tagName}-${domIndex(element)}`)}`;
   element.dataset.applyosFieldId = fieldId;
   return fieldId;
 }
@@ -129,6 +178,29 @@ function createSelectorHint(element: HTMLElement, fieldId: string): string {
   const name = element.getAttribute("name");
   if (name) return `${element.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
   return `[data-applyos-field-id="${fieldId}"]`;
+}
+
+function extractRadioGroupLabel(radio: HTMLInputElement): string {
+  const fieldset = radio.closest("fieldset");
+  const legend = fieldset?.querySelector("legend")?.textContent?.trim();
+  if (legend && legend.length > 8) return legend.slice(0, 500);
+
+  const group = radio.closest(
+    "[role='group'], [role='radiogroup'], .application-question, [class*='question'], [class*='field'], fieldset"
+  );
+  if (group) {
+    const candidates = Array.from(
+      group.querySelectorAll<HTMLElement>("legend, h1, h2, h3, h4, h5, h6, p, label, span, div")
+    )
+      .filter((node) => !node.querySelector("input, select, textarea") && isElementVisible(node))
+      .map((node) => node.textContent?.replace(/\s+/g, " ").trim() || "")
+      .filter((text) => text.length > 12 && !/^(yes|no|select)$/i.test(text));
+    if (candidates.length) {
+      return candidates.sort((a, b) => b.length - a.length)[0].slice(0, 500);
+    }
+  }
+
+  return extractFieldLabel(radio);
 }
 
 function extractFieldLabel(element: HTMLElement): string {
@@ -231,14 +303,48 @@ function isDisabled(element: HTMLElement): boolean {
 }
 
 function getFieldValue(element: HTMLElement): string {
+  return readFieldValue(element);
+}
+
+export function readFieldValue(element: HTMLElement | null): string {
+  if (!element) return "";
+
+  const choiceValue = readChoiceGroupValue(element);
+  if (choiceValue) return choiceValue;
+  if (resolveChoiceGroupRoot(element)) return "";
+
+  if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
+    const selected = document.querySelector<HTMLInputElement>(
+      `input[type="radio"][name="${CSS.escape(element.name)}"]:checked`
+    );
+    if (!selected) return "";
+    return getRadioOptionLabel(selected) || selected.value;
+  }
   if (element instanceof HTMLInputElement) {
-    if (element.type === "checkbox" || element.type === "radio") return element.checked ? element.value : "";
+    if (element.type === "checkbox") return element.checked ? getRadioOptionLabel(element) || element.value || "Yes" : "";
     if (element.type === "file") return "";
     return element.value;
   }
-  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return element.value;
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
+    if (element instanceof HTMLSelectElement && element.selectedOptions[0]) {
+      return element.selectedOptions[0].textContent?.trim() || element.value;
+    }
+    return element.value;
+  }
   if (element.isContentEditable) return element.innerText;
   return "";
+}
+
+function getRadioOptionLabel(input: HTMLInputElement): string {
+  if (input.id) {
+    const label = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(input.id)}"]`);
+    if (label?.textContent?.trim()) return label.textContent.trim();
+  }
+  const parentLabel = input.closest("label");
+  if (parentLabel?.textContent?.trim()) {
+    return parentLabel.textContent.replace(/\s+/g, " ").trim();
+  }
+  return input.getAttribute("aria-label") || "";
 }
 
 export function findField(fieldId: string, selectorHint: string): HTMLElement | null {
@@ -267,6 +373,9 @@ export function insertFieldValue(
   if (element instanceof HTMLInputElement && element.type === "file") {
     return { ok: false, error: "File uploads require manual user action." };
   }
+
+  const choiceResult = insertChoiceGroupValue(element, value);
+  if (choiceResult) return choiceResult;
 
   element.focus();
   if (element instanceof HTMLSelectElement) {

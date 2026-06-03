@@ -1,9 +1,10 @@
 import Dexie, { type Table } from "dexie";
-import seedExperienceDatabase from "../../data/alex-melo-experience-database.md?raw";
+import starterExperienceDatabase from "./starterExperienceDatabase.md?raw";
 import {
   DEFAULT_SETTINGS,
   EMPTY_EXPERIENCE_DATABASE,
   type CvSource,
+  type JobListingCache,
   type ExperienceDatabase,
   type ExperienceProfile,
   type QueuedJobUrl,
@@ -14,6 +15,7 @@ import {
   type UserProfile
 } from "../shared/types";
 import { normalizeText } from "../matching/normalize";
+import { ensureCvLibrarySeeded } from "./seedCvLibrary";
 
 class ApplyOSDatabase extends Dexie {
   experienceProfile!: Table<ExperienceProfile, string>;
@@ -25,6 +27,7 @@ class ApplyOSDatabase extends Dexie {
   trackedJobs!: Table<TrackedJob, string>;
   scanHistory!: Table<ScanHistory, string>;
   queuedJobUrls!: Table<QueuedJobUrl, string>;
+  jobListingCache!: Table<JobListingCache, string>;
 
   constructor() {
     super("applyos");
@@ -55,6 +58,18 @@ class ApplyOSDatabase extends Dexie {
       trackedJobs: "id, status, company, title, updatedAt",
       scanHistory: "id, url, pageType, platform, scannedAt",
       queuedJobUrls: "id, &normalizedUrl, status, platform, company, fitScore, createdAt, updatedAt"
+    });
+    this.version(4).stores({
+      experienceProfile: "id, parsedAt",
+      experienceDatabase: "id, updatedAt",
+      cvSources: "id, fileName, importedAt",
+      userProfile: "id",
+      savedAnswers: "id, category, source, updatedAt, *tags",
+      settings: "id",
+      trackedJobs: "id, status, company, title, updatedAt",
+      scanHistory: "id, url, pageType, platform, scannedAt",
+      queuedJobUrls: "id, &normalizedUrl, status, platform, company, fitScore, createdAt, updatedAt",
+      jobListingCache: "id, listingUrl, extractedAt, platform"
     });
   }
 }
@@ -113,27 +128,29 @@ export async function initializeDatabase(): Promise<void> {
   if (!experienceDatabase?.markdown?.trim()) {
     await db.experienceDatabase.put({
       ...EMPTY_EXPERIENCE_DATABASE,
-      markdown: seedExperienceDatabase.trim(),
-      sourceFiles: [
-        "alex_melo_sec.pdf",
-        "alexandre_melo_cv_26.pdf",
-        "cv_alex_melo_p.pdf",
-        "CV_TAM.pdf",
-        "CVCA.pdf"
-      ],
+      markdown: starterExperienceDatabase.trim(),
+      sourceFiles: [],
       updatedAt: now(),
       generatedWithOpenRouter: false
     });
   }
+
+  await ensureCvLibrarySeeded(
+    () => db.cvSources.toArray(),
+    async (source) => {
+      await db.cvSources.put(source);
+    }
+  );
 }
 
 export async function exportAllData(): Promise<Record<string, unknown>> {
   return {
     exportedAt: now(),
-    version: 3,
+    version: 4,
     experienceProfile: await db.experienceProfile.toArray(),
     experienceDatabase: await db.experienceDatabase.toArray(),
     cvSources: await db.cvSources.toArray(),
+    jobListingCache: await db.jobListingCache.toArray(),
     userProfile: await db.userProfile.toArray(),
     savedAnswers: await db.savedAnswers.toArray(),
     settings: await db.settings.toArray(),
@@ -155,13 +172,15 @@ export async function importAllData(data: Record<string, unknown>): Promise<void
       db.settings,
       db.trackedJobs,
       db.scanHistory,
-      db.queuedJobUrls
+      db.queuedJobUrls,
+      db.jobListingCache
     ],
     async () => {
       const mappings: Array<[Table<unknown, string>, unknown]> = [
         [db.experienceProfile as Table<unknown, string>, data.experienceProfile],
         [db.experienceDatabase as Table<unknown, string>, data.experienceDatabase],
         [db.cvSources as Table<unknown, string>, data.cvSources],
+        [db.jobListingCache as Table<unknown, string>, data.jobListingCache],
         [db.userProfile as Table<unknown, string>, data.userProfile],
         [db.savedAnswers as Table<unknown, string>, data.savedAnswers],
         [db.settings as Table<unknown, string>, data.settings],
