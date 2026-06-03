@@ -1,3 +1,4 @@
+import { isProfileLinkField } from "./profileLinkFields";
 import { EXPERIENCE_QUESTION_CATEGORIES, SCREENING_QUESTION_CATEGORIES } from "./constants";
 import type { DetectedField, FieldCategory } from "./types";
 
@@ -42,6 +43,7 @@ export function inferScreeningCategory(label: string): FieldCategory | undefined
 }
 
 export function isAutoSavableField(field: DetectedField): boolean {
+  if (isProfileLinkField(field)) return false;
   if (field.category && SCREENING_QUESTION_CATEGORIES.includes(field.category)) return true;
   if (field.category && EXPERIENCE_QUESTION_CATEGORIES.includes(field.category)) return true;
   if (

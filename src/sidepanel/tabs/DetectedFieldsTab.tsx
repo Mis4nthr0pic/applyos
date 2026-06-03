@@ -87,6 +87,7 @@ export function DetectedFieldsTab(props: Props) {
         field.category === "manual_review" ||
         !field.category ||
         (!SAFE_PROFILE_CATEGORIES.includes(field.category) &&
+          field.category !== "social_profile" &&
           !EXPERIENCE_QUESTION_CATEGORIES.includes(field.category) &&
           !PROFILE_PREFERENCE_CATEGORIES.includes(field.category) &&
           !DOCUMENT_CATEGORIES.includes(field.category) &&

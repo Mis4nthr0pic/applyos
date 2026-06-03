@@ -5,6 +5,7 @@ import { isAutoSavableField } from "./screeningFields";
 import { DEFAULT_SETTINGS, type DetectedField, type SavedAnswer } from "./types";
 
 import { isUnsafeShortAnswer } from "./answerQuality";
+import { isProfileLinkField } from "./profileLinkFields";
 
 function answerCategory(category?: DetectedField["category"]): SavedAnswer["category"] {
   if (category === "work_authorization" || category === "legal_authorization") return "work_auth";
@@ -30,6 +31,7 @@ export async function saveFieldAnswer(
 ): Promise<"saved" | "updated" | "skipped"> {
   const settings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
   if (!settings.autoSaveNewAnswers) return "skipped";
+  if (isProfileLinkField(field)) return "skipped";
   if (!isAutoSavableField(field)) return "skipped";
 
   const trimmed = value.trim();

@@ -1,6 +1,7 @@
 import { findBestScreeningAnswer, findAnswerMatches } from "../matching/answerMatcher";
 import { isUnsafeShortAnswer } from "../shared/answerQuality";
 import { isApplicationQuestionField } from "../shared/applicationFields";
+import { isProfileLinkField } from "../shared/profileLinkFields";
 import { SCREENING_QUESTION_CATEGORIES, DOCUMENT_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "../shared/constants";
 import { withEffectiveCategory } from "../shared/screeningFields";
 import type { AnswerSuggestion, DetectedField, SavedAnswer, UserProfile } from "../shared/types";
@@ -92,6 +93,14 @@ function resolveInsertValue(
   const suggestion = suggestions?.[field.fieldId];
   if (suggestion?.answer && suggestion.answer !== "NO_FIT") {
     return { value: formatAnswerForField(field, suggestion.answer) };
+  }
+
+  if (isProfileLinkField(resolvedField)) {
+    const profileValue = profileValueForField(resolvedField, userProfile);
+    if (profileValue && !isUnsafeShortAnswer(resolvedField, profileValue)) {
+      return { value: profileValue };
+    }
+    return undefined;
   }
 
   const profileValue = profileValueForField(resolvedField, userProfile);
