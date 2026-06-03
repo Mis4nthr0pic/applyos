@@ -50,17 +50,56 @@ async function pingFrame(tabId: number, frameId: number): Promise<boolean> {
 export async function ensureContentScript(tabId: number): Promise<void> {
   const frameIds = await getFrameIds(tabId);
   const alive = await Promise.all(frameIds.map((frameId) => pingFrame(tabId, frameId)));
-  if (alive.some(Boolean)) return;
+  const missingFrameIds = frameIds.filter((_, index) => !alive[index]);
+  if (!missingFrameIds.length) return;
 
   await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
+    target:
+      missingFrameIds.length === frameIds.length
+        ? { tabId, allFrames: true }
+        : { tabId, frameIds: missingFrameIds },
     files: [CONTENT_SCRIPT_FILE]
   });
 
-  const afterInject = await Promise.all(frameIds.map((frameId) => pingFrame(tabId, frameId)));
-  if (!afterInject.some(Boolean)) {
+  const afterInject = await Promise.all(missingFrameIds.map((frameId) => pingFrame(tabId, frameId)));
+  if (!alive.some(Boolean) && !afterInject.some(Boolean)) {
     throw new Error("Content script failed to attach to this tab.");
   }
+}
+
+function fieldMessageFailed(response: unknown): boolean {
+  if (!response || typeof response !== "object") return false;
+  if ("ok" in response && response.ok === false) {
+    const error = "error" in response ? String(response.error) : "";
+    return /could not be found|not supported|disabled/i.test(error);
+  }
+  if ("value" in response && typeof (response as { value?: string }).value === "string") {
+    return !(response as { value?: string }).value?.trim();
+  }
+  return false;
+}
+
+async function routeFieldMessage<T>(tabId: number, message: ContentMessage): Promise<T> {
+  await ensureContentScript(tabId);
+
+  const frameId = "frameId" in message ? message.frameId : undefined;
+  if (typeof frameId === "number") {
+    const response = await sendMessageToFrame<T>(tabId, frameId, message);
+    if (response !== undefined) return response;
+    throw new Error("ApplyOS could not reach the field frame on this page.");
+  }
+
+  const frameIds = await getFrameIds(tabId);
+  const ordered = [...frameIds.filter((id) => id !== 0), ...frameIds.filter((id) => id === 0)];
+
+  for (const candidateFrameId of ordered) {
+    const response = await sendMessageToFrame<T>(tabId, candidateFrameId, message);
+    if (response === undefined) continue;
+    if (fieldMessageFailed(response)) continue;
+    return response;
+  }
+
+  throw new Error("ApplyOS could not reach the active tab frame.");
 }
 
 async function sendMessageToFrame<T>(
@@ -96,12 +135,12 @@ async function scanAllFrames(tabId: number, message: Extract<ContentMessage, { t
   let stablePolls = 0;
 
   const firstPass = await collect();
-  const embeddedAts = looksLikeEmbeddedAtsPage(
-    tabUrl,
-    firstPass.find((result) => result.frameId === 0)?.context.bodyText
-  );
+  const topFrame = firstPass.find((result) => result.frameId === 0);
+  const frameCount = (await getFrameIds(tabId)).length;
+  const embeddedAts = looksLikeEmbeddedAtsPage(tabUrl, topFrame?.context.bodyText, topFrame?.context);
   const nativeAts = looksLikeNativeAtsPage(tabUrl);
-  const pollDelays = embeddedAts ? [0, 600, 1200, 2000, 2800] : nativeAts ? [0, 400, 900] : [0, 500];
+  const pollDelays =
+    embeddedAts || frameCount > 1 ? [0, 600, 1200, 2000, 2800] : nativeAts ? [0, 400, 900] : [0, 500, 1500];
 
   for (const delay of pollDelays) {
     if (delay > 0) {
@@ -203,10 +242,14 @@ export async function sendMessageToTab<T>(tabId: number, message: ContentMessage
     return (await broadcastMessage<T>(tabId, message)) as T;
   }
 
+  if (message.type === "INSERT_FIELD" || message.type === "GET_FIELD_VALUE") {
+    return routeFieldMessage<T>(tabId, message);
+  }
+
   await ensureContentScript(tabId);
 
   const frameId = "frameId" in message ? message.frameId : undefined;
-  if (frameId !== undefined) {
+  if (typeof frameId === "number") {
     const response = await sendMessageToFrame<T>(tabId, frameId, message);
     if (response !== undefined) return response;
     throw new Error("ApplyOS could not reach the field frame on this page.");

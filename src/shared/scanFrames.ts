@@ -1,6 +1,6 @@
 import { dedupeDetectedFields } from "./dedupeFields";
 import { mergeJobInfo } from "../adapters/listingResolver";
-import type { DetectedField, PageType, ScanResult } from "./types";
+import type { DetectedField, PageContext, PageType, ScanResult } from "./types";
 
 export interface FrameScanResult extends ScanResult {
   frameId: number;
@@ -12,11 +12,24 @@ function pickLongerText(left?: string, right?: string): string {
   return leftText.length >= rightText.length ? leftText : rightText;
 }
 
-export function looksLikeEmbeddedAtsPage(tabUrl: string, bodyText?: string): boolean {
+export function looksLikeEmbeddedAtsPage(
+  tabUrl: string,
+  bodyText?: string,
+  context?: Pick<PageContext, "iframeSources" | "pathname">
+): boolean {
   if (looksLikeNativeAtsPage(tabUrl)) return false;
 
   const haystack = `${tabUrl} ${bodyText ?? ""}`.toLowerCase();
-  return /greenhouse\.io|gh_jid|grnhse|lever-app|ashbyhq\.com/i.test(haystack);
+  if (/greenhouse\.io|gh_jid|grnhse|lever-app|ashbyhq\.com/i.test(haystack)) return true;
+
+  const iframeHaystack = (context?.iframeSources ?? []).join(" ").toLowerCase();
+  if (/greenhouse\.io|gh_jid|grnhse|lever\.co|ashbyhq\.com/i.test(iframeHaystack)) return true;
+
+  if (/\/apply(?:\/|$|\?|#)/i.test(context?.pathname ?? tabUrl)) {
+    if (/stripe\.com\/jobs|fireblocks\.com\/careers|\.com\/careers/i.test(tabUrl)) return true;
+  }
+
+  return false;
 }
 
 export function looksLikeNativeAtsPage(tabUrl: string): boolean {

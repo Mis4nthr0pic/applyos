@@ -39,3 +39,14 @@ export function dedupeDetectedFields(fields: DetectedField[]): DetectedField[] {
 
   return [...best.values()];
 }
+
+/** Replace fields from one frame while keeping detections from other frames. */
+export function mergeFieldsFromFrame(
+  existing: DetectedField[],
+  incoming: DetectedField[],
+  frameId = 0
+): DetectedField[] {
+  const tagged = incoming.map((field) => ({ ...field, frameId: field.frameId ?? frameId }));
+  const keep = existing.filter((field) => (field.frameId ?? 0) !== frameId);
+  return dedupeDetectedFields([...keep, ...tagged]);
+}

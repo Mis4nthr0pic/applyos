@@ -36,6 +36,7 @@ import {
   mergeScanSuggestions,
   uniqueApplicationQuestionFields
 } from "../shared/scanSuggestions";
+import { mergeFieldsFromFrame } from "../shared/dedupeFields";
 import { saveFieldAnswer } from "../shared/saveFieldAnswer";
 import { enrichCvSourceFromCatalog, heuristicCvSummary, recommendCvLocally } from "../matching/recommendCv";
 import type { CvRecommendation } from "../matching/recommendCv";
@@ -218,18 +219,34 @@ export function App() {
   React.useEffect(() => {
     const runtime = typeof chrome !== "undefined" ? chrome.runtime : undefined;
     if (!runtime?.onMessage) return;
-    const listener = (message: {
-      type?: string;
-      fields?: DetectedField[];
-      status?: string;
-      field?: DetectedField;
-      value?: string;
-    }) => {
+    const listener = (
+      message: {
+        type?: string;
+        fields?: DetectedField[];
+        status?: string;
+        field?: DetectedField;
+        value?: string;
+      },
+      sender: chrome.runtime.MessageSender
+    ) => {
       if (message.type === "APPLYOS_FIELDS_CHANGED" && message.fields) {
-        setScan((current) => (current ? { ...current, fields: message.fields!, watching: true } : current));
-        const dynamicFields = message.fields.filter((field) => field.isDynamic);
-        if (dynamicFields.length && settingsRef.current.autoInsertFields) {
-          runAutoInsert(dynamicFields)
+        const frameId = sender.frameId ?? 0;
+        setScan((current) =>
+          current
+            ? {
+                ...current,
+                fields: mergeFieldsFromFrame(current.fields, message.fields!, frameId),
+                watching: true
+              }
+            : current
+        );
+        const dynamicFields = message.fields.map((field) => ({
+          ...field,
+          frameId: field.frameId ?? frameId
+        }));
+        const dynamicFieldsToInsert = dynamicFields.filter((field) => field.isDynamic);
+        if (dynamicFieldsToInsert.length && settingsRef.current.autoInsertFields) {
+          runAutoInsert(dynamicFieldsToInsert)
             .then((insertResult) => {
               const summary = insertResult ? autoInsertSummary(insertResult) : undefined;
               setNotice({
