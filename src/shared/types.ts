@@ -13,6 +13,8 @@ export interface PageContext {
   pathname: string;
   title: string;
   bodyText: string;
+  /** Job listing text with application-form regions removed when both appear on one page. */
+  jobPostingText: string;
   hasForms: boolean;
   buttons: string[];
   links: string[];

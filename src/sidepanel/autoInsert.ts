@@ -1,6 +1,8 @@
 import { findBestScreeningAnswer, findAnswerMatches } from "../matching/answerMatcher";
-import { SCREENING_QUESTION_CATEGORIES, DOCUMENT_CATEGORIES } from "../shared/constants";
-import { isAutoSavableField, withEffectiveCategory } from "../shared/screeningFields";
+import { isUnsafeShortAnswer } from "../shared/answerQuality";
+import { isApplicationQuestionField } from "../shared/applicationFields";
+import { SCREENING_QUESTION_CATEGORIES, DOCUMENT_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "../shared/constants";
+import { withEffectiveCategory } from "../shared/screeningFields";
 import type { AnswerSuggestion, DetectedField, SavedAnswer, UserProfile } from "../shared/types";
 import { insertIntoField, profileValueForField, sendToActiveTab } from "./lib";
 
@@ -93,19 +95,28 @@ function resolveInsertValue(
   }
 
   const profileValue = profileValueForField(resolvedField, userProfile);
-  if (profileValue) {
+  if (profileValue && !isUnsafeShortAnswer(resolvedField, profileValue)) {
     return { value: profileValue };
   }
 
-  const isScreening =
-    isAutoSavableField(resolvedField) ||
+  if (isApplicationQuestionField(resolvedField)) {
+    const exact = savedAnswers.find(
+      (answer) => answer.normalizedQuestion === resolvedField.normalizedLabel
+    );
+    if (exact && !isUnsafeShortAnswer(resolvedField, exact.answer)) {
+      return { value: exact.answer, savedAnswerId: exact.id };
+    }
+    return undefined;
+  }
+
+  const isScreeningField =
     Boolean(resolvedField.category && SCREENING_QUESTION_CATEGORIES.includes(resolvedField.category)) ||
     resolvedField.fieldType === "radio" ||
     resolvedField.fieldType === "select";
 
-  if (isScreening) {
-    const screeningMatch = findBestScreeningAnswer(resolvedField, savedAnswers, 0.55);
-    if (screeningMatch) {
+  if (isScreeningField) {
+    const screeningMatch = findBestScreeningAnswer(resolvedField, savedAnswers, 0.72);
+    if (screeningMatch && !isUnsafeShortAnswer(resolvedField, screeningMatch.answer.answer)) {
       return {
         value: screeningMatch.answer.answer,
         savedAnswerId: screeningMatch.answer.id
@@ -113,9 +124,17 @@ function resolveInsertValue(
     }
   }
 
+  if (resolvedField.category && SAFE_PROFILE_CATEGORIES.includes(resolvedField.category)) {
+    return undefined;
+  }
+
   const matches = findAnswerMatches(resolvedField, savedAnswers, 1);
   const best = matches[0];
-  if (best && best.confidence >= answerBankMinConfidence) {
+  if (
+    best &&
+    best.confidence >= answerBankMinConfidence &&
+    !isUnsafeShortAnswer(resolvedField, best.answer.answer)
+  ) {
     return { value: best.answer.answer, savedAnswerId: best.answer.id };
   }
 
@@ -161,7 +180,7 @@ export async function autoInsertFields(
       options.suggestions,
       minConfidence
     );
-    if (!resolved?.value.trim()) {
+    if (!resolved?.value.trim() || isUnsafeShortAnswer(field, resolved.value)) {
       result.skipped += 1;
       continue;
     }

@@ -9,6 +9,7 @@ import {
   readChoiceGroupValue,
   resolveChoiceGroupRoot
 } from "./choiceGroups";
+import { isComboboxInput, readComboboxDisplayValue } from "./combobox";
 import {
   extractQuestionLabel,
   findFieldContainer,
@@ -299,6 +300,10 @@ export function readFieldValue(element: HTMLElement | null): string {
   if (element instanceof HTMLInputElement) {
     if (element.type === "checkbox") return element.checked ? getRadioOptionLabel(element) || element.value || "Yes" : "";
     if (element.type === "file") return "";
+    if (isComboboxInput(element)) {
+      const display = readComboboxDisplayValue(element);
+      if (display) return display;
+    }
     return element.value;
   }
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {

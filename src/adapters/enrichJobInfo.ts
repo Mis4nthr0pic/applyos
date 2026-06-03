@@ -7,6 +7,7 @@ import {
   resolveListingUrl
 } from "./listingResolver";
 import { buildPageContextFromHtml } from "../content/pageContext";
+import { hasJobPostingContent } from "../content/jobPostingText";
 
 const CACHE_PREFIX = "applyos:job-listing:";
 
@@ -35,7 +36,8 @@ export async function enrichJobInfo(
   }
 
   if (!listingUrl || listingUrl === context.url) {
-    if (isThinJobInfo(jobInfo)) {
+    const combinedListingAndForm = onApplicationPage && hasJobPostingContent(context);
+    if (isThinJobInfo(jobInfo) || combinedListingAndForm) {
       return { jobInfo: reparseCurrentPage(context, platform, jobInfo), fromListing: false };
     }
     return { jobInfo, fromListing: false };

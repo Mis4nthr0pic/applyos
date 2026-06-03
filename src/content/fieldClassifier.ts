@@ -22,7 +22,7 @@ const RULES: Array<[FieldCategory, RegExp]> = [
     "why_role",
     /\b(why.*(role|position|job)|interest.*(role|position)|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change)\b/
   ],
-  ["about_me", /\b(tell us about yourself|about you|professional summary|introduce yourself)\b/],
+  ["about_me", /\b(tell us about yourself|about you|professional summary|introduce yourself|tell us what you|what you re great|great at|ideal role)\b/],
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation)\b/],
   ["leadership", /\b(leadership|led a team|manage a team|mentored)\b/],
   ["conflict", /\b(conflict|disagreement|difficult colleague)\b/],
@@ -85,7 +85,7 @@ export function classifyField(label: string, fieldType: string): FieldCategory {
     fieldType === "textarea" ||
     fieldType === "text" ||
     normalized.includes("?") ||
-    /\b(why|what|how|when|where|which|describe|tell us|explain|reason|looking for|experience|please|motivation|interested|eligible|currently)\b/.test(
+    /\b(why|what|how|when|where|which|describe|tell us|explain|reason|looking for|experience|please|motivation|interested|eligible|currently|great at|ideal role|strengths)\b/.test(
       normalized
     )
   ) {

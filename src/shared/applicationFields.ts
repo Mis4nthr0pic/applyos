@@ -3,12 +3,12 @@ import type { DetectedField, FieldCategory } from "./types";
 import { looksLikeApplicationQuestion } from "./screeningFields";
 
 const APPLICATION_LABEL_PATTERNS: Array<[FieldCategory, RegExp]> = [
+  ["about_me", /\b(tell us about yourself|about you|introduce yourself|professional summary|tell us what you|what you.re great|great at|ideal role for you|strengths)\b/i],
   [
     "why_role",
-    /\b(looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change|why.*leave|motivation|why.*role|why.*position)\b/i
+    /\b(ideal role|what role|great at|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change|why.*leave|motivation|why.*role|why.*position)\b/i
   ],
   ["why_company", /\b(why.*(company|us|join|team|organization)|interest.*company|why do you want)\b/i],
-  ["about_me", /\b(tell us about yourself|about you|introduce yourself|professional summary)\b/i],
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation|technical)\b/i],
   [
     "custom_question",
@@ -17,7 +17,7 @@ const APPLICATION_LABEL_PATTERNS: Array<[FieldCategory, RegExp]> = [
 ];
 
 const CUSTOM_ANSWER_NAME_PATTERN =
-  /\b(question_\d+|answers_attributes|text_value|custom_field|application_question)\b/i;
+  /\b(question_\d+|answers_attributes|text_value|custom_field|application_question|data-field-path)\b/i;
 
 const PROFILE_FIELD_TYPES = new Set(["file"]);
 
@@ -81,6 +81,14 @@ export function isApplicationQuestionField(field: DetectedField): boolean {
     return true;
   }
 
+  if (
+    field.platform === "ashby" &&
+    field.fieldType === "textarea" &&
+    field.selectorHint.includes("data-field-path")
+  ) {
+    return true;
+  }
+
   return false;
 }
 
@@ -118,4 +126,9 @@ function extractPrimaryQuestionFromLabel(label: string): string {
 
 export function getApplicationQuestionFields(fields: DetectedField[]): DetectedField[] {
   return fields.filter(isApplicationQuestionField).map(normalizeApplicationField);
+}
+
+/** True when the form has open-ended / custom questions worth an OpenRouter batch call. */
+export function hasApplicationQuestionsForAi(fields: DetectedField[]): boolean {
+  return getApplicationQuestionFields(fields).length > 0;
 }

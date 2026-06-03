@@ -34,12 +34,15 @@ export const genericAdapter: SiteAdapter = {
 
 export function extractGenericJobInfo(context: PageContext, platform: string): JobInfo {
   const jobPosting = findJobPosting(context.jsonLd);
+  const postingText = context.jobPostingText?.trim() || "";
+  const listingText = postingText.length >= 200 ? postingText : context.bodyText;
   const description =
     asString(jobPosting?.description) ||
     context.meta["og:description"] ||
     context.meta.description ||
-    context.bodyText;
-  const sections = extractSections(description);
+    listingText;
+  const sectionSource = postingText.length >= 200 ? postingText : description;
+  const sections = extractSections(sectionSource);
   const title =
     asString(jobPosting?.title) ||
     context.meta["og:title"] ||
@@ -52,20 +55,20 @@ export function extractGenericJobInfo(context: PageContext, platform: string): J
   const location =
     nestedString(jobPosting?.jobLocation, "name") ||
     nestedString(jobPosting?.jobLocation, "addressLocality") ||
-    findLabelValue(context.bodyText, "Location");
+    findLabelValue(listingText, "Location");
 
   return {
     title: cleanTitle(title),
     company,
     location,
-    department: findLabelValue(context.bodyText, "Department"),
-    employmentType: asString(jobPosting?.employmentType) || findLabelValue(context.bodyText, "Employment type"),
+    department: findLabelValue(listingText, "Department"),
+    employmentType: asString(jobPosting?.employmentType) || findLabelValue(listingText, "Employment type"),
     description,
     requirements: sections.requirements,
     responsibilities: sections.responsibilities,
     niceToHave: sections.niceToHave,
     benefits: sections.benefits,
-    salaryRange: findSalary(context.bodyText),
+    salaryRange: findSalary(listingText),
     sourceUrl: context.url,
     platform,
     detectedAt: new Date().toISOString()

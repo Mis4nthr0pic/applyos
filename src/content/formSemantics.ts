@@ -49,22 +49,39 @@ export function buildContainerSelector(container: HTMLElement, label: string): s
   return `[data-applyos-field-id="${CSS.escape(`applyos-container-${hashString(label)}`)}"]`;
 }
 
+function extractAshbyQuestionLabel(input: HTMLElement): string {
+  const entry = input.closest(".ashby-application-form-field-entry");
+  if (!entry) return "";
+  const title = entry.querySelector<HTMLElement>(".ashby-application-form-question-title");
+  return cleanLabelText(title?.innerText || title?.textContent || "");
+}
+
 export function extractQuestionLabel(_container: HTMLElement, input?: HTMLElement | null): string {
   if (!input) return pickBestQuestionLabel(collectContainerLabels(_container));
 
+  const ashbyLabel = extractAshbyQuestionLabel(input);
+  if (ashbyLabel.length >= 8) return ashbyLabel.slice(0, 500);
+
   const scoped = extractInputScopedLabel(input);
-  if (scoped) return scoped;
+  if (scoped && !isPlaceholderLabel(scoped)) return scoped;
 
   const fieldRoot = findFieldContainer(input);
   if (fieldRoot) {
+    const ashbyTitle = extractAshbyQuestionLabel(input);
+    if (ashbyTitle.length >= 8) return ashbyTitle.slice(0, 500);
+
     const fromField = pickBestQuestionLabel(collectDirectFieldLabels(fieldRoot, input));
-    if (fromField) return fromField;
+    if (fromField && !isPlaceholderLabel(fromField)) return fromField;
   }
 
   return pickBestQuestionLabel([
-    ...collectAriaLabels(input),
+    ...collectAriaLabels(input).filter((text) => !isPlaceholderLabel(text)),
     ...collectContainerLabels(fieldRoot ?? _container)
   ]);
+}
+
+function isPlaceholderLabel(label: string): boolean {
+  return /^(type here|enter text|enter your|select|choose|search)\b/i.test(label.trim());
 }
 
 function extractInputScopedLabel(input: HTMLElement): string {
@@ -108,7 +125,7 @@ function collectDirectFieldLabels(fieldRoot: HTMLElement, input: HTMLElement): s
 
   Array.from(
     fieldRoot.querySelectorAll<HTMLElement>(
-      ":scope > label, :scope > .label, :scope > .application-label, :scope > .application-label--required, :scope > .field-label, :scope > legend"
+      ":scope > label, :scope > .label, :scope > .application-label, :scope > .application-label--required, :scope > .field-label, :scope > legend, .ashby-application-form-question-title"
     )
   )
     .filter((node) => node !== input && isElementVisible(node))
@@ -185,8 +202,11 @@ function scoreQuestionLabel(label: string): number {
   if (/\b(linkedin profile|linkedin url|github profile|portfolio url|resume|cover letter)\b/i.test(label)) {
     score -= 80;
   }
-  if (/^(first name|last name|email|phone|country|city|location)\b/i.test(label)) {
-    score -= 50;
+  if (/^(type here|enter|select|choose|search)\b/i.test(label)) {
+    score -= 100;
+  }
+  if (/\b(great at|ideal role|tell us what you|what you.re great|strengths)\b/i.test(label)) {
+    score += 35;
   }
   if (/\b(linkedin profile|what s reason|reason you are looking)\b/i.test(label) && label.includes("?")) {
     score -= 100;

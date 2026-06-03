@@ -18,7 +18,7 @@ export function looksLikeApplicationQuestion(label: string): boolean {
   if (normalized.length < 8) return false;
   return (
     normalized.includes("?") ||
-    /\b(why|what|how|when|where|which|who|describe|tell us|explain|share|list|provide|reason|looking for|experience|years of|please|motivation|interested|eligible|currently|anything else|additional|comments)\b/.test(
+    /\b(why|what|how|when|where|which|who|describe|tell us|explain|share|list|provide|reason|looking for|experience|years of|please|motivation|interested|eligible|currently|anything else|additional|comments|great at|ideal role|strengths)\b/.test(
       normalized
     )
   );

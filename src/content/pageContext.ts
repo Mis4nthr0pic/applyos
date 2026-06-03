@@ -1,4 +1,5 @@
 import type { PageContext } from "../shared/types";
+import { extractJobPostingText, extractJobPostingTextFromDocument } from "./jobPostingText";
 
 export function buildPageContextFromHtml(html: string, url: string): PageContext {
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -28,6 +29,7 @@ export function buildPageContextFromDocument(doc: Document, url: string): PageCo
     .replace(/\n{3,}/g, "\n\n")
     .trim()
     .slice(0, 120_000);
+  const jobPostingText = extractJobPostingTextFromDocument(doc);
 
   return {
     url,
@@ -35,6 +37,7 @@ export function buildPageContextFromDocument(doc: Document, url: string): PageCo
     pathname: parsed.pathname,
     title: doc.title,
     bodyText,
+    jobPostingText,
     hasForms: Boolean(doc.querySelector("form, input, textarea, select, [contenteditable='true']")),
     buttons: Array.from(
       doc.querySelectorAll<HTMLElement>("button, input[type='submit'], input[type='button'], [role='button']")
@@ -75,6 +78,7 @@ export function buildPageContext(): PageContext {
     pathname: window.location.pathname,
     title: document.title,
     bodyText: visibleBodyText(),
+    jobPostingText: extractJobPostingText(),
     hasForms: Boolean(document.querySelector("form, input, textarea, select, [contenteditable='true']")),
     buttons: Array.from(
       document.querySelectorAll<HTMLElement>("button, input[type='submit'], input[type='button'], [role='button']")

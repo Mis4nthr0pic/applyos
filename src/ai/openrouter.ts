@@ -228,11 +228,12 @@ Instructions:
 1. For each question, select the best positioning angle and evidence from the entire experience database.
 2. Combine facts across all CV versions when they reinforce the same point.
 3. For motivation / reason-for-change / why-role questions, synthesize from Job search context (if provided) plus documented CV experience. Do not return NO_FIT when that context is available.
-4. For "how many global markets" or similar count questions, estimate a reasonable integer from countries, regions, and markets mentioned across all CVs and experience (e.g. Portugal, Brazil, global Web3 community = multiple markets). Return only a plain number unless the field is clearly a long-text textarea.
-5. Only return NO_FIT when neither the CV/database nor Job search context provides enough to draft an honest answer.
-6. Apply the human voice rewrite process internally; return only final answer text in JSON.
-7. For "how many" count fields, return only a plain number (e.g. "12"), not a sentence.
-8. Preserve each input fieldId exactly in your JSON response.
+4. For strengths / "what you're great at" / ideal role questions, combine Job search context with CV evidence to describe positioning and target roles. Do not return NO_FIT when that context is available.
+5. For "how many global markets" or similar count questions, estimate a reasonable integer from countries, regions, and markets mentioned across all CVs and experience (e.g. Portugal, Brazil, global Web3 community = multiple markets). Return only a plain number unless the field is clearly a long-text textarea.
+6. Only return NO_FIT when neither the CV/database nor Job search context provides enough to draft an honest answer.
+7. Apply the human voice rewrite process internally; return only final answer text in JSON.
+8. For "how many" count fields, return only a plain number (e.g. "12"), not a sentence.
+9. Preserve each input fieldId exactly in your JSON response.
 
 Return JSON with an answers array containing exactly ${questions.length} entries, one per fieldId.`
   )) as { answers?: BatchAnswerResult[] };
