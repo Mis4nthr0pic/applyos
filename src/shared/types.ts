@@ -79,6 +79,7 @@ export type FieldCategory =
   | "start_date"
   | "custom_question"
   | "gender"
+  | "pronouns"
   | "race_ethnicity"
   | "disability"
   | "veteran_status"
@@ -345,6 +346,8 @@ export interface Settings {
   queueDevMode: boolean;
   useOptimizedExperienceDatabase: boolean;
   autoSaveNewAnswers: boolean;
+  autoInsertFields: boolean;
+  autoGenerateAnswersOnScan: boolean;
   promptOverrides?: Partial<Record<import("../ai/prompts").PromptKey, string>>;
 }
 
@@ -381,7 +384,8 @@ export type ContentMessage =
   | { type: "EXTRACT_JOB_INFO" }
   | { type: "SET_DYNAMIC_WATCH"; enabled: boolean }
   | { type: "INSERT_FIELD"; fieldId: string; selectorHint: string; value: string }
-  | { type: "GET_FIELD_VALUE"; fieldId: string; selectorHint: string };
+  | { type: "GET_FIELD_VALUE"; fieldId: string; selectorHint: string }
+  | { type: "PING" };
 
 export const DEFAULT_SETTINGS: Settings = {
   id: "default",
@@ -396,7 +400,9 @@ export const DEFAULT_SETTINGS: Settings = {
   queueAutoScanAfterOpening: false,
   queueDevMode: false,
   useOptimizedExperienceDatabase: true,
-  autoSaveNewAnswers: true
+  autoSaveNewAnswers: true,
+  autoInsertFields: true,
+  autoGenerateAnswersOnScan: true
 };
 
 export const EMPTY_EXPERIENCE_DATABASE: ExperienceDatabase = {

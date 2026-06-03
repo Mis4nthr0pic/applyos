@@ -27,6 +27,7 @@ import type {
   UserProfile
 } from "../../shared/types";
 import type { CvRecommendation } from "../../matching/recommendCv";
+import { isApplicationQuestionField } from "../../shared/applicationFields";
 import { findAnswerMatches } from "../../matching/answerMatcher";
 import { profileValueForField, recommendationLabel } from "../lib";
 import { Badge, Button, Card, EmptyState, Notice } from "../components/UI";
@@ -41,6 +42,7 @@ interface Props {
   settings: Settings;
   suggestions: Record<string, AnswerSuggestion>;
   loading: boolean;
+  aiGenerating?: boolean;
   watchDynamic: boolean;
   onWatchDynamic: (value: boolean) => void;
   onScan: () => void;
@@ -62,9 +64,7 @@ export function DetectedFieldsTab(props: Props) {
   const safe = fields.filter(
     (field) => field.category && SAFE_PROFILE_CATEGORIES.includes(field.category) && !field.isDisabled
   );
-  const application = fields.filter(
-    (field) => field.category && EXPERIENCE_QUESTION_CATEGORIES.includes(field.category) && !field.isDynamic
-  );
+  const application = fields.filter((field) => isApplicationQuestionField(field));
   const factual = fields.filter(
     (field) => field.category && PROFILE_PREFERENCE_CATEGORIES.includes(field.category) && !field.isDynamic
   );
@@ -82,6 +82,7 @@ export function DetectedFieldsTab(props: Props) {
   const manual = fields.filter(
     (field) =>
       !field.isDynamic &&
+      !isApplicationQuestionField(field) &&
       (field.isDisabled ||
         field.category === "manual_review" ||
         !field.category ||
@@ -163,7 +164,7 @@ export function DetectedFieldsTab(props: Props) {
           ) : null}
           <FieldGroup
             title="Safe Profile Fields"
-            description="These can be filled from your saved profile after you approve the action."
+            description="Filled from your saved profile when auto-insert is enabled, or use Insert manually."
             fields={safe}
             action={
               safe.length ? (
@@ -184,18 +185,21 @@ export function DetectedFieldsTab(props: Props) {
           </FieldGroup>
           <FieldGroup
             title="Application Questions"
-            description="Saved answers come first. Generate all experience-backed answers in one OpenRouter batch."
+            description="Custom questions like visa type, job-change reason, and market experience. AI generates answers on scan when enabled in Settings."
             fields={application}
             action={
-              props.settings.generateFromExperienceEnabled &&
-              !props.settings.localOnlyMode &&
-              props.settings.openRouterApiKey &&
-              application.length &&
-              props.fit &&
-              props.fit.overallScore >= props.settings.jobFitThreshold ? (
+              props.aiGenerating ? (
+                <Notice tone="info">
+                  <strong>AI is drafting answers for this form…</strong>
+                </Notice>
+              ) : !props.settings.localOnlyMode &&
+                props.settings.openRouterApiKey &&
+                application.length ? (
                 <Button loading={props.loading} onClick={props.onSuggestAllAnswers}>
                   <Sparkles size={16} /> Generate All Answers
                 </Button>
+              ) : props.settings.localOnlyMode ? (
+                <Notice tone="warning">Turn off Local-only mode and add an OpenRouter key to use AI answers.</Notice>
               ) : undefined
             }
           >
@@ -232,7 +236,7 @@ export function DetectedFieldsTab(props: Props) {
           </FieldGroup>
           <FieldGroup
             title="Screening & Compliance"
-            description="Work authorization, location, timezone, and voluntary survey answers. New answers are saved automatically when you fill them on the page."
+            description="Work authorization, location, timezone, and survey answers. Auto-inserts from Answer Bank on scan when confidence is high."
             fields={screening}
           >
             {(field) => (
@@ -318,7 +322,7 @@ function CvRecommendationCard(props: Props) {
       <div className="card-header">
         <div>
           <p className="eyebrow">CV to upload</p>
-          <h2>{recommendation.recommendedFileName}</h2>
+          <h2>{recommended?.fileName ?? recommendation.recommendedFileName}</h2>
           {recommended?.positioningLabel ? <p className="subtle">{recommended.positioningLabel}</p> : null}
         </div>
         <Badge tone="good">{Math.round(recommendation.confidence * 100)}% fit</Badge>
@@ -348,7 +352,9 @@ function CvRecommendationCard(props: Props) {
       ) : null}
       <div className="button-row">
         <Button
-          onClick={() => navigator.clipboard.writeText(recommendation.recommendedFileName)}
+          onClick={() =>
+            navigator.clipboard.writeText(recommended?.fileName ?? recommendation.recommendedFileName)
+          }
         >
           Copy filename
         </Button>
@@ -560,7 +566,7 @@ function ApplicationQuestion({
   onSaveSuggestion: (field: DetectedField, suggestion: AnswerSuggestion) => void;
   onSkip: (field: DetectedField) => void;
 }) {
-  const matches = findAnswerMatches(field, answers, 3);
+  const matches = findAnswerMatches(field, answers, 5).filter((match) => match.confidence >= 0.55);
 
   return (
     <Card className="field-card">

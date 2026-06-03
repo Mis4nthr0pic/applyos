@@ -1,13 +1,23 @@
 import type { DetectedField, FieldCategory, FieldType, InsertResult } from "../shared/types";
-import { normalizeText, uniqueStrings } from "./text";
+import { normalizeText, optionMatches, uniqueStrings } from "./text";
 import { isElementVisible } from "./pageContext";
 import { classifyField } from "./fieldClassifier";
 import {
   extractButtonChoiceGroups,
   insertChoiceGroupValue,
+  insertNativeRadioGroupValue,
   readChoiceGroupValue,
   resolveChoiceGroupRoot
 } from "./choiceGroups";
+import {
+  extractQuestionLabel,
+  findFieldContainer,
+  findNearbyHeading,
+  hashString,
+  isManagedChoiceInput,
+  resolveFieldContainerFromHint,
+  FIELD_CONTAINER_SELECTORS
+} from "./formSemantics";
 
 const FIELD_SELECTOR =
   "textarea, input[type='text'], input[type='email'], input[type='url'], input[type='tel'], input[type='number'], input[type='checkbox'], input[type='radio'], input[type='file'], input:not([type]), select, [contenteditable='true']";
@@ -98,6 +108,8 @@ function inferDependencies(category: FieldCategory, isDynamic: boolean): string[
 }
 
 function shouldIgnoreField(element: HTMLElement): boolean {
+  if (isManagedChoiceInput(element)) return true;
+
   if (element instanceof HTMLInputElement && element.type === "radio") {
     if (!isRadioFieldAccessible(element)) return true;
   } else if (!isElementVisible(element)) {
@@ -164,16 +176,14 @@ function domIndex(element: Element): number {
   return Array.from(document.querySelectorAll(FIELD_SELECTOR)).indexOf(element);
 }
 
-function hashString(value: string): string {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(index);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
-}
-
 function createSelectorHint(element: HTMLElement, fieldId: string): string {
+  const container = findFieldContainer(element);
+  if (container) {
+    const fieldPath = container.getAttribute("data-field-path");
+    if (fieldPath) return `[data-field-path="${CSS.escape(fieldPath)}"]`;
+    const automationId = container.getAttribute("data-automation-id");
+    if (automationId) return `[data-automation-id="${CSS.escape(automationId)}"]`;
+  }
   if (element.id) return `#${CSS.escape(element.id)}`;
   const name = element.getAttribute("name");
   if (name) return `${element.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
@@ -181,29 +191,22 @@ function createSelectorHint(element: HTMLElement, fieldId: string): string {
 }
 
 function extractRadioGroupLabel(radio: HTMLInputElement): string {
-  const fieldset = radio.closest("fieldset");
-  const legend = fieldset?.querySelector("legend")?.textContent?.trim();
-  if (legend && legend.length > 8) return legend.slice(0, 500);
-
-  const group = radio.closest(
-    "[role='group'], [role='radiogroup'], .application-question, [class*='question'], [class*='field'], fieldset"
-  );
-  if (group) {
-    const candidates = Array.from(
-      group.querySelectorAll<HTMLElement>("legend, h1, h2, h3, h4, h5, h6, p, label, span, div")
-    )
-      .filter((node) => !node.querySelector("input, select, textarea") && isElementVisible(node))
-      .map((node) => node.textContent?.replace(/\s+/g, " ").trim() || "")
-      .filter((text) => text.length > 12 && !/^(yes|no|select)$/i.test(text));
-    if (candidates.length) {
-      return candidates.sort((a, b) => b.length - a.length)[0].slice(0, 500);
-    }
+  const container = findFieldContainer(radio) ?? radio.closest("fieldset, [role='radiogroup'], [role='group']");
+  if (container instanceof HTMLElement) {
+    const label = extractQuestionLabel(container, radio);
+    if (label.length > 8) return label;
   }
 
   return extractFieldLabel(radio);
 }
 
 function extractFieldLabel(element: HTMLElement): string {
+  const container = findFieldContainer(element);
+  if (container) {
+    const label = extractQuestionLabel(container, element);
+    if (label) return label;
+  }
+
   const candidates: string[] = [];
   if (element.id) {
     const explicit = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(element.id)}"]`);
@@ -217,20 +220,6 @@ function extractFieldLabel(element: HTMLElement): string {
     element.getAttribute("name") || ""
   );
 
-  const container = element.closest(
-    ".field, .form-field, .form-group, .application-question, [class*='field'], [class*='question'], [data-testid]"
-  );
-  if (container) {
-    const nearby = Array.from(
-      container.querySelectorAll<HTMLElement>("label, legend, h1, h2, h3, h4, p, span")
-    )
-      .filter((item) => item !== element && isElementVisible(item))
-      .map((item) => item.innerText?.trim() || "")
-      .filter(Boolean)
-      .slice(0, 4);
-    candidates.push(...nearby);
-  }
-
   const heading = findNearbyHeading(element);
   if (heading) candidates.push(heading);
   return uniqueStrings(candidates)
@@ -238,19 +227,6 @@ function extractFieldLabel(element: HTMLElement): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 500);
-}
-
-function findNearbyHeading(element: HTMLElement): string {
-  let current: Element | null = element;
-  for (let depth = 0; depth < 4 && current; depth += 1) {
-    let sibling = current.previousElementSibling;
-    while (sibling) {
-      if (/^H[1-6]$/.test(sibling.tagName)) return sibling.textContent?.trim() || "";
-      sibling = sibling.previousElementSibling;
-    }
-    current = current.parentElement;
-  }
-  return "";
 }
 
 function getFieldType(element: HTMLElement): FieldType {
@@ -348,10 +324,35 @@ function getRadioOptionLabel(input: HTMLInputElement): string {
 }
 
 export function findField(fieldId: string, selectorHint: string): HTMLElement | null {
-  return (
-    document.querySelector<HTMLElement>(`[data-applyos-field-id="${CSS.escape(fieldId)}"]`) ||
-    safeQuery(selectorHint)
-  );
+  if (!selectorHint.includes("data-applyos-field-id")) {
+    const fromHint = resolveFieldContainerFromHint(selectorHint);
+    if (fromHint) return fromHint;
+  }
+
+  const hinted = safeQuery(selectorHint);
+  if (hinted && !selectorHint.includes("data-applyos-field-id")) {
+    return findFieldContainer(hinted) ?? hinted;
+  }
+
+  const nodes = document.querySelectorAll<HTMLElement>(`[data-applyos-field-id="${CSS.escape(fieldId)}"]`);
+  for (const node of nodes) {
+    try {
+      if (node.matches(FIELD_CONTAINER_SELECTORS)) return node;
+    } catch {
+      // Ignore invalid selector matches.
+    }
+  }
+  for (const node of nodes) {
+    if (node.dataset.applyosChoiceGroup) return node;
+  }
+  for (const node of nodes) {
+    if (node instanceof HTMLInputElement && node.type === "radio") {
+      const group = node.closest<HTMLElement>("fieldset, [role='radiogroup'], [role='group']");
+      if (group) return group;
+    }
+  }
+  if (nodes.length) return nodes[0] ?? null;
+  return hinted ?? safeQuery(selectorHint);
 }
 
 function safeQuery(selector: string): HTMLElement | null {
@@ -377,20 +378,19 @@ export function insertFieldValue(
   const choiceResult = insertChoiceGroupValue(element, value);
   if (choiceResult) return choiceResult;
 
+  const nativeRadioResult = insertNativeRadioGroupValue(element, value);
+  if (nativeRadioResult) return nativeRadioResult;
+
+  if (element instanceof HTMLInputElement && element.type === "radio") {
+    return { ok: false, error: `No confident radio option match for "${value}".` };
+  }
+
   element.focus();
   if (element instanceof HTMLSelectElement) {
     const option = findSelectOption(element, value);
     if (!option) return { ok: false, error: `No confident dropdown option match for "${value}".` };
     setNativeValue(element, option.value);
-  } else if (element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type)) {
-    if (element.type === "radio" && element.name) {
-      const radio = Array.from(
-        document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
-      ).find((candidate) => optionMatches(candidate.value, value) || optionMatches(extractFieldLabel(candidate), value));
-      if (!radio) return { ok: false, error: `No confident radio option match for "${value}".` };
-      radio.click();
-      return { ok: true };
-    }
+  } else if (element instanceof HTMLInputElement && element.type === "checkbox") {
     const shouldCheck = /^(true|yes|1|checked)$/i.test(value);
     if (element.checked !== shouldCheck) element.click();
     return { ok: true };
@@ -436,10 +436,4 @@ function findSelectOption(select: HTMLSelectElement, value: string): HTMLOptionE
       (option) => optionMatches(option.value, value) || optionMatches(option.textContent || "", value)
     )
   );
-}
-
-function optionMatches(left: string, right: string): boolean {
-  const a = normalizeText(left);
-  const b = normalizeText(right);
-  return Boolean(a && b && a === b);
 }

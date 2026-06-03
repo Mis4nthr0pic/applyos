@@ -64,6 +64,24 @@ export function Notice({
   );
 }
 
+export function LoadingPanel({
+  label,
+  detail
+}: {
+  label: string;
+  detail?: string;
+}) {
+  return (
+    <div className="loading-panel" role="status" aria-live="polite" aria-busy="true">
+      <LoaderCircle size={22} className="spin" aria-hidden="true" />
+      <div>
+        <strong>{label}</strong>
+        {detail ? <p>{detail}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 export function Badge({
   children,
   tone = "neutral"

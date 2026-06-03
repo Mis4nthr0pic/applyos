@@ -1,4 +1,4 @@
-import { SCREENING_QUESTION_CATEGORIES } from "../shared/constants";
+import { isAutoSavableField, withEffectiveCategory } from "../shared/screeningFields";
 import type { DetectedField } from "../shared/types";
 import {
   elementBelongsToChoiceField,
@@ -36,13 +36,18 @@ function isCaptureTarget(element: HTMLElement): boolean {
   if (element instanceof HTMLInputElement) {
     return !["hidden", "password", "submit", "button", "reset", "file"].includes(element.type);
   }
+  if (element.getAttribute("role") === "option" || element.getAttribute("role") === "listbox") {
+    return true;
+  }
   return element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || element.isContentEditable;
 }
 
 function captureFromElement(element: HTMLElement): void {
   const fields = extractDetectedFields(platform);
   const field = fields.find((candidate) => elementMatchesField(element, candidate));
-  if (!field?.category || !SCREENING_QUESTION_CATEGORIES.includes(field.category)) return;
+  if (!field || !isAutoSavableField(field)) return;
+
+  const savableField = withEffectiveCategory(field);
 
   const target =
     resolveChoiceGroupRoot(element) ||
@@ -51,14 +56,14 @@ function captureFromElement(element: HTMLElement): void {
   const value = readFieldValue(target);
   if (!value.trim()) return;
 
-  const captureKey = `${field.normalizedLabel}:${value}`;
-  if (lastCaptured.get(field.fieldId) === captureKey) return;
-  lastCaptured.set(field.fieldId, captureKey);
+  const captureKey = `${savableField.normalizedLabel}:${value}`;
+  if (lastCaptured.get(savableField.fieldId) === captureKey) return;
+  lastCaptured.set(savableField.fieldId, captureKey);
 
   chrome.runtime
     .sendMessage({
       type: "APPLYOS_FIELD_ANSWERED",
-      field,
+      field: savableField,
       value
     })
     .catch(() => {
@@ -67,6 +72,19 @@ function captureFromElement(element: HTMLElement): void {
 }
 
 function elementMatchesField(element: HTMLElement, field: DetectedField): boolean {
+  if (
+    field.selectorHint.includes("data-field-path") ||
+    field.selectorHint.includes("data-automation-id") ||
+    field.selectorHint.startsWith("#")
+  ) {
+    try {
+      const entry = document.querySelector<HTMLElement>(field.selectorHint);
+      if (entry && (entry === element || entry.contains(element))) return true;
+    } catch {
+      // Ignore invalid selector hints.
+    }
+  }
+
   if (elementBelongsToChoiceField(element, field)) return true;
   if (element.dataset.applyosFieldId === field.fieldId) return true;
   if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {

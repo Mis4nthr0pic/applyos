@@ -7,15 +7,23 @@ import type {
 } from "../shared/types";
 
 export async function sendToActiveTab<T>(message: ContentMessage): Promise<T> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error("No active tab is available.");
-  try {
-    return (await chrome.tabs.sendMessage(tab.id, message)) as T;
-  } catch {
-    throw new Error(
-      "ApplyOS cannot access this tab. Open a normal job or careers page, refresh it, and try again."
-    );
+  const response = (await chrome.runtime.sendMessage({
+    type: "APPLYOS_RELAY_TO_TAB",
+    payload: message
+  })) as T | { error?: string };
+
+  if (response && typeof response === "object" && "error" in response && response.error) {
+    throw new Error(response.error);
   }
+  return response as T;
+}
+
+export async function ensureAllTabsConnected(): Promise<void> {
+  const response = (await chrome.runtime.sendMessage({ type: "APPLYOS_ENSURE_ALL_TABS" })) as {
+    ok?: boolean;
+    error?: string;
+  };
+  if (response?.error) throw new Error(response.error);
 }
 
 export function profileValueForField(
@@ -38,6 +46,7 @@ export function profileValueForField(
     website: "websiteUrl",
     work_authorization: "workAuthorization",
     visa_sponsorship: "visaSponsorship",
+    legal_authorization: "workAuthorization",
     salary: "salaryExpectation",
     start_date: "startDate"
   };
@@ -46,10 +55,7 @@ export function profileValueForField(
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-export async function insertIntoField(
-  field: DetectedField,
-  value: string
-): Promise<InsertResult> {
+export async function insertIntoField(field: DetectedField, value: string): Promise<InsertResult> {
   return sendToActiveTab<InsertResult>({
     type: "INSERT_FIELD",
     fieldId: field.fieldId,

@@ -1,5 +1,4 @@
 import { extractJobFromPage } from "../adapters/extractJob";
-import { enrichJobInfo } from "../adapters/enrichJobInfo";
 import type { ContentMessage, ScanResult } from "../shared/types";
 import { buildPageContext } from "./pageContext";
 import {
@@ -12,6 +11,12 @@ import {
 import { startFieldAutoCapture } from "./fieldAutoCapture";
 import { selectAdapter } from "../adapters";
 
+declare global {
+  interface Window {
+    __applyosContentLoaded?: boolean;
+  }
+}
+
 let observer: MutationObserver | undefined;
 let observerTimeout: number | undefined;
 let removeDependencyListeners: (() => void) | undefined;
@@ -19,38 +24,48 @@ let stopFieldAutoCapture: (() => void) | undefined;
 let currentPlatform = "generic";
 let lastFieldSignature = "";
 
-chrome.runtime.onMessage.addListener(
-  (message: ContentMessage, _sender, sendResponse: (response: unknown) => void) => {
-    if (message.type === "SCAN_PAGE") {
-      scanPage(message.watchDynamicFields)
-        .then(sendResponse)
-        .catch((error) => sendResponse({ error: getErrorMessage(error) }));
-      return true;
-    }
-    if (message.type === "EXTRACT_JOB_INFO") {
-      extractJobOnly()
-        .then(sendResponse)
-        .catch((error) => sendResponse({ error: getErrorMessage(error) }));
-      return true;
-    }
-    if (message.type === "SET_DYNAMIC_WATCH") {
-      if (message.enabled) startObserver();
-      else stopObserver();
-      sendResponse({ ok: true });
+if (!window.__applyosContentLoaded) {
+  window.__applyosContentLoaded = true;
+
+  chrome.runtime.onMessage.addListener(
+    (message: ContentMessage, _sender, sendResponse: (response: unknown) => void) => {
+      if (message.type === "SCAN_PAGE") {
+        scanPage(message.watchDynamicFields)
+          .then(sendResponse)
+          .catch((error) => sendResponse({ error: getErrorMessage(error) }));
+        return true;
+      }
+      if (message.type === "EXTRACT_JOB_INFO") {
+        extractJobOnly()
+          .then(sendResponse)
+          .catch((error) => sendResponse({ error: getErrorMessage(error) }));
+        return true;
+      }
+      if (message.type === "SET_DYNAMIC_WATCH") {
+        if (message.enabled) startObserver();
+        else stopObserver();
+        sendResponse({ ok: true });
+        return false;
+      }
+      if (message.type === "INSERT_FIELD") {
+        sendResponse(insertFieldValue(message.fieldId, message.selectorHint, message.value));
+        return false;
+      }
+      if (message.type === "GET_FIELD_VALUE") {
+        const element = findField(message.fieldId, message.selectorHint);
+        sendResponse({ ok: Boolean(element), value: readFieldValue(element) });
+        return false;
+      }
+      if (message.type === "PING") {
+        sendResponse({ ok: true });
+        return false;
+      }
       return false;
     }
-    if (message.type === "INSERT_FIELD") {
-      sendResponse(insertFieldValue(message.fieldId, message.selectorHint, message.value));
-      return false;
-    }
-    if (message.type === "GET_FIELD_VALUE") {
-      const element = findField(message.fieldId, message.selectorHint);
-      sendResponse({ ok: Boolean(element), value: readFieldValue(element) });
-      return false;
-    }
-    return false;
-  }
-);
+  );
+
+  stopFieldAutoCapture = startFieldAutoCapture("generic");
+}
 
 async function extractJobOnly() {
   const context = buildPageContext();
@@ -150,5 +165,3 @@ function notifyExtension(message: Record<string, unknown>): void {
     // The side panel may have been closed while a short dynamic watch was active.
   });
 }
-
-stopFieldAutoCapture = startFieldAutoCapture("generic");
