@@ -4,6 +4,7 @@ const COMBOBOX_ROOT_SELECTORS =
   '[class*="select__control"], [class*="select-container"], [class*="react-select"], [role="combobox"]';
 
 const LOCATION_LABEL_PATTERN = /\b(country|nationality|residence|citizenship|region)\b/i;
+const LOCATION_AUTOCOMPLETE_LABEL = /\b(current location|your location|where are you located|^location$)\b/i;
 
 export function isComboboxInput(element: HTMLElement): boolean {
   if (element.getAttribute("role") === "combobox") return true;
@@ -46,6 +47,12 @@ export function readComboboxDisplayValue(element: HTMLElement): string {
 }
 
 export function isIncompleteLocationValue(label: string, value: string): boolean {
+  if (LOCATION_AUTOCOMPLETE_LABEL.test(label)) {
+    const trimmed = value.trim();
+    if (!trimmed) return true;
+    if (trimmed.length < 4) return true;
+    return false;
+  }
   if (!LOCATION_LABEL_PATTERN.test(label)) return false;
   const trimmed = value.trim();
   if (!trimmed) return true;

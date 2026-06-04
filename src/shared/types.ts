@@ -1,3 +1,4 @@
+import type { FieldWidget } from "./profileFieldValue";
 import { DEFAULT_JOB_SEARCH_CONTEXT } from "./defaultJobSearchContext";
 
 export type PageType =
@@ -117,6 +118,8 @@ export interface DetectedField {
   isDynamic?: boolean;
   /** Frame that owns this field when the ATS form is embedded in an iframe. */
   frameId?: number;
+  /** How the control behaves for profile/autofill (country picker vs location typeahead, etc.). */
+  widget?: FieldWidget;
 }
 
 export interface ExperienceRole {
@@ -185,6 +188,8 @@ export interface UserProfile {
   country?: string;
   state?: string;
   city?: string;
+  /** Full location line for free-text fields (e.g. "Florianópolis, Brazil" or "Remote"). */
+  location?: string;
   linkedinUrl?: string;
   githubUrl?: string;
   portfolioUrl?: string;
@@ -394,7 +399,14 @@ export type ContentMessage =
   | { type: "SCAN_PAGE"; watchDynamicFields: boolean }
   | { type: "EXTRACT_JOB_INFO" }
   | { type: "SET_DYNAMIC_WATCH"; enabled: boolean }
-  | { type: "INSERT_FIELD"; fieldId: string; selectorHint: string; value: string; frameId?: number }
+  | {
+      type: "INSERT_FIELD";
+      fieldId: string;
+      selectorHint: string;
+      value: string;
+      frameId?: number;
+      widget?: FieldWidget;
+    }
   | { type: "GET_FIELD_VALUE"; fieldId: string; selectorHint: string; frameId?: number }
   | { type: "PING" };
 

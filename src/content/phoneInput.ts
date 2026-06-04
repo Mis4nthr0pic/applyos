@@ -1,6 +1,6 @@
 import type { InsertResult } from "../shared/types";
 import { parsePhoneNumber, type ParsedPhone } from "../shared/phoneFormat";
-import { optionMatches } from "./text";
+import { optionMatches, optionMatchesCountry } from "./text";
 
 function dispatchInputEvents(element: HTMLElement): void {
   element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -79,6 +79,7 @@ function phoneOptionMatches(optionText: string, parsed: ParsedPhone): boolean {
   const normalized = optionText.replace(/\s+/g, " ").trim();
   if (!normalized || normalized.toLowerCase() === "select...") return false;
   if (parsed.dialCode && normalized.includes(`+${parsed.dialCode}`)) return true;
+  if (parsed.countryName && optionMatchesCountry(normalized, parsed.countryName)) return true;
   if (parsed.countryName && optionMatches(normalized, parsed.countryName)) return true;
   return false;
 }

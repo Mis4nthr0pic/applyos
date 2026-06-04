@@ -6,6 +6,7 @@ import {
   extractDetectedFields,
   findField,
   insertFieldValue,
+  insertFieldValueAsync,
   readFieldValue
 } from "./fieldDetection";
 import { startFieldAutoCapture } from "./fieldAutoCapture";
@@ -49,8 +50,15 @@ if (!window.__applyosContentLoaded) {
         return false;
       }
       if (message.type === "INSERT_FIELD") {
-        sendResponse(insertFieldValue(message.fieldId, message.selectorHint, message.value));
-        return false;
+        insertFieldValueAsync(
+          message.fieldId,
+          message.selectorHint,
+          message.value,
+          message.widget
+        )
+          .then(sendResponse)
+          .catch((error) => sendResponse({ ok: false, error: getErrorMessage(error) }));
+        return true;
       }
       if (message.type === "GET_FIELD_VALUE") {
         const element = findField(message.fieldId, message.selectorHint);

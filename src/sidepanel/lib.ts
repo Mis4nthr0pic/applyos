@@ -1,11 +1,10 @@
+import { profileValueForFieldWithWidget } from "../shared/profileFieldValue";
 import type {
   ContentMessage,
   DetectedField,
-  FieldCategory,
   InsertResult,
   UserProfile
 } from "../shared/types";
-import { formatPhoneForProfile } from "../shared/phoneFormat";
 
 export async function sendToActiveTab<T>(message: ContentMessage): Promise<T> {
   const response = (await chrome.runtime.sendMessage({
@@ -31,32 +30,7 @@ export function profileValueForField(
   field: DetectedField,
   profile?: UserProfile
 ): string | undefined {
-  if (!profile) return undefined;
-  const map: Partial<Record<FieldCategory, keyof UserProfile>> = {
-    first_name: "firstName",
-    last_name: "lastName",
-    full_name: "fullName",
-    email: "email",
-    phone: "phone",
-    country: "country",
-    state: "state",
-    city: "city",
-    linkedin: "linkedinUrl",
-    github: "githubUrl",
-    portfolio: "portfolioUrl",
-    website: "websiteUrl",
-    work_authorization: "workAuthorization",
-    visa_sponsorship: "visaSponsorship",
-    legal_authorization: "workAuthorization",
-    salary: "salaryExpectation",
-    start_date: "startDate"
-  };
-  const key = field.category ? map[field.category] : undefined;
-  const value = key ? profile[key] : undefined;
-  if (field.category === "phone") {
-    return formatPhoneForProfile(profile.phone, profile.country);
-  }
-  return typeof value === "string" && value.trim() ? value : undefined;
+  return profileValueForFieldWithWidget(field, profile);
 }
 
 export async function insertIntoField(field: DetectedField, value: string): Promise<InsertResult> {
@@ -65,7 +39,8 @@ export async function insertIntoField(field: DetectedField, value: string): Prom
     fieldId: field.fieldId,
     selectorHint: field.selectorHint,
     value,
-    frameId: field.frameId
+    frameId: field.frameId,
+    widget: field.widget
   });
 }
 

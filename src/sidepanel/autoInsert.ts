@@ -211,6 +211,12 @@ export async function autoInsertFields(
       }
       if (field.category === "country" || field.category === "state") {
         await delay(350);
+      } else if (
+        field.widget === "location_autocomplete" ||
+        field.widget === "country_dropdown" ||
+        field.widget === "combobox"
+      ) {
+        await delay(500);
       }
     } catch (error) {
       result.failures.push({

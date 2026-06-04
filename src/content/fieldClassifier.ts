@@ -10,7 +10,7 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["phone", /\b(phone|mobile|telephone)\b/],
   ["country", /\b(country|nation|where do you currently live|country of residence|nationality)\b/],
   ["state", /\b(state|province|region)\b/],
-  ["city", /\b(city|town)\b/],
+  ["city", /\b(city|town|current location|your location|where are you located|^location$)\b/],
   ["linkedin", /\blinkedin\b/],
   ["github", /\b(github|gitlab)\b/],
   [

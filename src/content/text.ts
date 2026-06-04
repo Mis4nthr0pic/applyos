@@ -45,3 +45,29 @@ export function optionMatches(left: string, right: string): boolean {
   }
   return false;
 }
+
+/** Match profile country names to options like "Brazil (+55)" or "United States (+1)". */
+export function optionMatchesCountry(left: string, right: string): boolean {
+  if (optionMatches(left, right)) return true;
+  const country = normalizeText(right);
+  const option = normalizeText(left);
+  if (!country || !option) return false;
+  if (option.startsWith(`${country} `) || option.startsWith(country)) return true;
+  const dial = left.match(/\(\+?(\d{1,4})\)/)?.[1];
+  const rightDial = right.match(/\(\+?(\d{1,4})\)/)?.[1];
+  if (dial && rightDial && dial === rightDial) return true;
+  return false;
+}
+
+/** Prefer options that contain the user's city / location tokens. */
+export function optionMatchesLocation(left: string, right: string): boolean {
+  if (optionMatches(left, right)) return true;
+  const target = normalizeText(right);
+  const option = normalizeText(left);
+  if (!target || !option) return false;
+
+  const tokens = target.split(/\s+/).filter((token) => token.length >= 4);
+  if (!tokens.length) return option.includes(target);
+  const hits = tokens.filter((token) => option.includes(token)).length;
+  return hits >= Math.min(2, tokens.length) || (tokens.length === 1 && hits === 1);
+}

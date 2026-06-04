@@ -9,7 +9,8 @@ import {
 } from "./formSemantics";
 import { dedupeDetectedFields } from "../shared/dedupeFields";
 import type { DetectedField, FieldCategory, FieldType, InsertResult } from "../shared/types";
-import { normalizeText, optionMatches, uniqueStrings } from "./text";
+import type { FieldWidget } from "../shared/profileFieldValue";
+import { normalizeText, optionMatches, optionMatchesCountry, uniqueStrings } from "./text";
 import { isElementVisible } from "./pageContext";
 import { classifyField } from "./fieldClassifier";
 import {
@@ -20,6 +21,7 @@ import {
   resolveChoiceGroupRoot
 } from "./choiceGroups";
 import { isComboboxInput, readComboboxDisplayValue } from "./combobox";
+import { elementNeedsComboboxInsert, insertComboboxValue } from "./comboboxInsert";
 import {
   insertPhoneFieldValue,
   isCompositePhoneInput,
@@ -30,6 +32,7 @@ import {
   extractLinkedInEasyApplyFields,
   findLinkedInEasyApplyRoot
 } from "./linkedinForm";
+import { resolveFieldWidget } from "./fieldWidgets";
 
 const FIELD_SELECTOR =
   "textarea, input[type='text'], input[type='email'], input[type='url'], input[type='tel'], input[type='number'], input[type='checkbox'], input[type='radio'], input[type='file'], input:not([type]), select, [contenteditable='true']";
@@ -66,6 +69,7 @@ export function extractDetectedFields(platform: string, scopeRoot?: ParentNode |
     const fieldType = getFieldType(element);
     const normalizedLabel = normalizeText(label);
     const category = classifyField(label, fieldType);
+    const widget = resolveFieldWidget(element, label || "");
     const duplicateKey =
       element instanceof HTMLInputElement && element.type === "radio" && element.name
         ? `radio:${element.name}`
@@ -88,6 +92,7 @@ export function extractDetectedFields(platform: string, scopeRoot?: ParentNode |
       isDisabled: isDisabled(element),
       selectorHint,
       category,
+      widget,
       dependsOn,
       isDynamic
     });
@@ -255,6 +260,7 @@ function extractFieldLabel(element: HTMLElement): string {
 }
 
 function getFieldType(element: HTMLElement): FieldType {
+  if (isComboboxInput(element)) return "select";
   if (element instanceof HTMLTextAreaElement) return "textarea";
   if (element instanceof HTMLSelectElement) return "select";
   if (element.isContentEditable) return "textarea";
@@ -429,7 +435,55 @@ function safeQuery(selector: string): HTMLElement | null {
 export function insertFieldValue(
   fieldId: string,
   selectorHint: string,
-  value: string
+  value: string,
+  widgetHint?: FieldWidget
+): InsertResult {
+  return insertFieldValueSync(fieldId, selectorHint, value, widgetHint);
+}
+
+export async function insertFieldValueAsync(
+  fieldId: string,
+  selectorHint: string,
+  value: string,
+  widgetHint?: FieldWidget
+): Promise<InsertResult> {
+  const element = findField(fieldId, selectorHint);
+  if (!element) return { ok: false, error: "The field could not be found. Rescan the page and try again." };
+  if (isDisabled(element)) return { ok: false, error: "This field is disabled and needs manual review." };
+  if (element instanceof HTMLInputElement && element.type === "file") {
+    return { ok: false, error: "File uploads require manual user action." };
+  }
+
+  const choiceResult = insertChoiceGroupValue(element, value);
+  if (choiceResult) return choiceResult;
+
+  const nativeRadioResult = insertNativeRadioGroupValue(element, value);
+  if (nativeRadioResult) return nativeRadioResult;
+
+  if (element instanceof HTMLInputElement && element.type === "radio") {
+    return { ok: false, error: `No confident radio option match for "${value}".` };
+  }
+
+  if (element instanceof HTMLInputElement && isCompositePhoneInput(element)) {
+    return insertPhoneFieldValue(element, value);
+  }
+
+  const widget =
+    widgetHint ??
+    (element instanceof HTMLElement ? resolveFieldWidget(element, extractFieldLabel(element)) : "default");
+
+  if (element instanceof HTMLInputElement && elementNeedsComboboxInsert(element)) {
+    return insertComboboxValue(element, value, widget);
+  }
+
+  return insertFieldValueSync(fieldId, selectorHint, value, widget);
+}
+
+function insertFieldValueSync(
+  fieldId: string,
+  selectorHint: string,
+  value: string,
+  _widgetHint?: FieldWidget
 ): InsertResult {
   const element = findField(fieldId, selectorHint);
   if (!element) return { ok: false, error: "The field could not be found. Rescan the page and try again." };
@@ -454,7 +508,7 @@ export function insertFieldValue(
 
   element.focus();
   if (element instanceof HTMLSelectElement) {
-    const option = findSelectOption(element, value);
+    const option = findSelectOption(element, value, _widgetHint);
     if (!option) return { ok: false, error: `No confident dropdown option match for "${value}".` };
     setNativeValue(element, option.value);
   } else if (element instanceof HTMLInputElement && element.type === "checkbox") {
@@ -490,8 +544,13 @@ function setNativeValue(
   setter?.call(element, value);
 }
 
-function findSelectOption(select: HTMLSelectElement, value: string): HTMLOptionElement | undefined {
+function findSelectOption(
+  select: HTMLSelectElement,
+  value: string,
+  widget?: FieldWidget
+): HTMLOptionElement | undefined {
   const options = Array.from(select.options);
+  const matches = widget === "country_dropdown" ? optionMatchesCountry : optionMatches;
   return (
     options.find((option) => option.value === value || option.textContent?.trim() === value) ||
     options.find(
@@ -500,7 +559,7 @@ function findSelectOption(select: HTMLSelectElement, value: string): HTMLOptionE
         option.textContent?.trim().toLowerCase() === value.toLowerCase()
     ) ||
     options.find(
-      (option) => optionMatches(option.value, value) || optionMatches(option.textContent || "", value)
+      (option) => matches(option.value, value) || matches(option.textContent?.trim() || "", value)
     )
   );
 }
