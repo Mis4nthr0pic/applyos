@@ -1,4 +1,5 @@
 import { PROFILE_LINK_PLATFORM_PATTERN } from "../shared/profileLinkFields";
+import { enhanceLinkedInFieldLabel, extractLinkedInQuestionLabel } from "./linkedinForm";
 import { isElementVisible } from "./pageContext";
 import { normalizeText, uniqueStrings } from "./text";
 
@@ -8,6 +9,7 @@ const NARROW_FIELD_CONTAINER_SELECTORS =
 /** Broader fallbacks when narrow wrappers are missing. */
 export const FIELD_CONTAINER_SELECTORS = [
   NARROW_FIELD_CONTAINER_SELECTORS,
+  "[data-test-form-element], .jobs-easy-apply-form-element",
   "fieldset",
   "[role='group']",
   "[role='radiogroup']",
@@ -68,6 +70,17 @@ function extractLeverApplicationLabel(input: HTMLElement): string {
 
 export function extractQuestionLabel(_container: HTMLElement, input?: HTMLElement | null): string {
   if (!input) return pickBestQuestionLabel(collectContainerLabels(_container));
+
+  const linkedInLabel = enhanceLinkedInFieldLabel(_container, input);
+  if (linkedInLabel.length >= 8) return linkedInLabel.slice(0, 500);
+
+  const formElement = input.closest<HTMLElement>(
+    "[data-test-form-element], .jobs-easy-apply-form-element"
+  );
+  if (formElement) {
+    const label = extractLinkedInQuestionLabel(formElement);
+    if (label.length >= 8) return label.slice(0, 500);
+  }
 
   const leverLabel = extractLeverApplicationLabel(input);
   if (leverLabel.length >= 8) return leverLabel.slice(0, 500);

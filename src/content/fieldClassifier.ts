@@ -86,6 +86,9 @@ export function classifyField(label: string, fieldType: string): FieldCategory {
   if (fieldType === "number" && /\b(how many|years|months|number of)\b/.test(normalized)) {
     return "custom_question";
   }
+  if (/\b(how many years).*(experience|with)\b/i.test(normalized)) {
+    return "custom_question";
+  }
   if (
     fieldType === "textarea" ||
     fieldType === "text" ||

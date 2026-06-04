@@ -6,6 +6,7 @@ import { customCareersAdapter } from "./customCareers";
 import { genericAdapter } from "./generic";
 import { greenhouseAdapter } from "./greenhouse";
 import { icimsAdapter } from "./icims";
+import { linkedinAdapter } from "./linkedin";
 import { leverAdapter } from "./lever";
 import { recruiteeAdapter } from "./recruitee";
 import { smartRecruitersAdapter } from "./smartrecruiters";
@@ -17,6 +18,7 @@ export const adapters: SiteAdapter[] = [
   ashbyAdapter,
   greenhouseAdapter,
   leverAdapter,
+  linkedinAdapter,
   workableAdapter,
   workdayAdapter,
   smartRecruitersAdapter,

@@ -13,7 +13,7 @@ const APPLICATION_LABEL_PATTERNS: Array<[FieldCategory, RegExp]> = [
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation|technical)\b/i],
   [
     "custom_question",
-    /\b(what visa|which visa|visa are you currently|how many|years of experience|global markets|salary expectation|notice period|earliest start|anything else we should know)\b/i
+    /\b(what visa|which visa|visa are you currently|how many|years of (?:work )?experience|years.*experience with|global markets|salary expectation|notice period|earliest start|anything else we should know)\b/i
   ]
 ];
 

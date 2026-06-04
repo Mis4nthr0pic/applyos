@@ -8,6 +8,10 @@ import {
   getStableFieldKey,
   hashString
 } from "./formSemantics";
+import {
+  insertLinkedInSelectableValue,
+  readLinkedInSelectableValue
+} from "./linkedinForm";
 import { isElementVisible } from "./pageContext";
 import { normalizeText, optionMatches, uniqueStrings } from "./text";
 
@@ -16,19 +20,21 @@ const NAV_BUTTON_PATTERN = /^(submit|cancel|back|next|save|apply|continue|close|
 export function extractButtonChoiceGroups(
   platform: string,
   seen: Set<string>,
-  result: DetectedField[]
+  result: DetectedField[],
+  scopeRoot: ParentNode = document
 ): void {
-  extractAshbyYesNoGroups(platform, seen, result);
-  extractGenericButtonChoiceGroups(platform, seen, result);
-  extractAriaRadioGroups(platform, seen, result);
+  extractAshbyYesNoGroups(platform, seen, result, scopeRoot);
+  extractGenericButtonChoiceGroups(platform, seen, result, scopeRoot);
+  extractAriaRadioGroups(platform, seen, result, scopeRoot);
 }
 
 function extractAshbyYesNoGroups(
   platform: string,
   seen: Set<string>,
-  result: DetectedField[]
+  result: DetectedField[],
+  scopeRoot: ParentNode = document
 ): void {
-  document.querySelectorAll<HTMLElement>(".ashby-application-form-field-entry").forEach((entry) => {
+  scopeRoot.querySelectorAll<HTMLElement>(".ashby-application-form-field-entry").forEach((entry) => {
     const yesNoContainer = entry.querySelector<HTMLElement>('[class*="_yesno_"]');
     if (!yesNoContainer) return;
 
@@ -69,11 +75,12 @@ function extractAshbyYesNoGroups(
 function extractGenericButtonChoiceGroups(
   platform: string,
   seen: Set<string>,
-  result: DetectedField[]
+  result: DetectedField[],
+  scopeRoot: ParentNode = document
 ): void {
   const containers = new Set<HTMLElement>();
 
-  document.querySelectorAll<HTMLElement>("button").forEach((button) => {
+  scopeRoot.querySelectorAll<HTMLElement>("button").forEach((button) => {
     if (!isElementVisible(button)) return;
     const container = findFieldContainer(button);
     if (!container || container.dataset.applyosChoiceGroup) return;
@@ -127,9 +134,10 @@ function extractGenericButtonChoiceGroups(
 function extractAriaRadioGroups(
   platform: string,
   seen: Set<string>,
-  result: DetectedField[]
+  result: DetectedField[],
+  scopeRoot: ParentNode = document
 ): void {
-  document.querySelectorAll<HTMLElement>('[role="radiogroup"]').forEach((group) => {
+  scopeRoot.querySelectorAll<HTMLElement>('[role="radiogroup"]').forEach((group) => {
     if (group.querySelector('input[type="radio"][data-applyos-field-id]')) return;
 
     const options = Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'));
@@ -193,7 +201,7 @@ function tagChoiceGroup(
   entry: HTMLElement,
   container: HTMLElement,
   fieldId: string,
-  kind: "yesno-button" | "aria-radiogroup"
+  kind: "yesno-button" | "aria-radiogroup" | "linkedin-selectable"
 ): void {
   entry.dataset.applyosFieldId = fieldId;
   entry.dataset.applyosChoiceGroup = kind;
@@ -247,6 +255,9 @@ export function readChoiceGroupValue(element: HTMLElement): string {
   if (root.dataset.applyosChoiceGroup === "aria-radiogroup") {
     return readAriaRadioGroupValue(root);
   }
+  if (root.dataset.applyosChoiceGroup === "linkedin-selectable") {
+    return readLinkedInSelectableValue(root);
+  }
   return "";
 }
 
@@ -270,6 +281,10 @@ export function insertChoiceGroupValue(element: HTMLElement, value: string): Ins
     if (!target) return { ok: false, error: `No confident option match for "${value}".` };
     activateChoiceOption(target);
     return { ok: true };
+  }
+
+  if (root.dataset.applyosChoiceGroup === "linkedin-selectable") {
+    return insertLinkedInSelectableValue(root, value);
   }
 
   return null;

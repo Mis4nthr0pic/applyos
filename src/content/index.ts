@@ -9,6 +9,7 @@ import {
   readFieldValue
 } from "./fieldDetection";
 import { startFieldAutoCapture } from "./fieldAutoCapture";
+import { findLinkedInEasyApplyRoot } from "./linkedinForm";
 import { selectAdapter } from "../adapters";
 
 declare global {
@@ -95,11 +96,15 @@ async function scanPage(watchDynamicFields: boolean): Promise<ScanResult> {
     : hasJobOnPage && fields.length > 0
       ? " Job description was read from this page."
       : "";
+  const linkedInHint =
+    adapter.id === "linkedin" && fields.length === 0
+      ? " Open the Easy Apply modal on this job, then scan again."
+      : "";
   const message =
     pageType === "job_listing_page" && fields.length === 0 && hasApplyButton
       ? `Job listing detected. Use Extract Job Info, click Apply manually, then Scan Page for form fields.${listingNote}`
       : fields.length === 0
-        ? `No application fields were found.${extracted.jobInfoFromListing ? listingNote : " Extract job info first if this is a listing page."}`
+        ? `No application fields were found.${linkedInHint}${extracted.jobInfoFromListing ? listingNote : " Extract job info first if this is a listing page."}`
         : extracted.jobInfoFromListing
           ? `Application form detected.${listingNote}`
           : undefined;
@@ -121,7 +126,9 @@ function startObserver(): void {
   stopObserver();
   removeDependencyListeners = attachDependencyListeners();
   observer = new MutationObserver(() => {
-    const fields = extractDetectedFields(currentPlatform);
+    const scope =
+      currentPlatform === "linkedin" ? findLinkedInEasyApplyRoot() : null;
+    const fields = extractDetectedFields(currentPlatform, scope);
     const signature = fieldSignature(fields);
     if (signature !== lastFieldSignature) {
       lastFieldSignature = signature;

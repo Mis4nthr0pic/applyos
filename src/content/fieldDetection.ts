@@ -1,3 +1,12 @@
+import {
+  extractQuestionLabel,
+  findFieldContainer,
+  findNearbyHeading,
+  hashString,
+  isManagedChoiceInput,
+  resolveFieldContainerFromHint,
+  FIELD_CONTAINER_SELECTORS
+} from "./formSemantics";
 import { dedupeDetectedFields } from "../shared/dedupeFields";
 import type { DetectedField, FieldCategory, FieldType, InsertResult } from "../shared/types";
 import { normalizeText, optionMatches, uniqueStrings } from "./text";
@@ -18,14 +27,9 @@ import {
   readPhoneFieldValue
 } from "./phoneInput";
 import {
-  extractQuestionLabel,
-  findFieldContainer,
-  findNearbyHeading,
-  hashString,
-  isManagedChoiceInput,
-  resolveFieldContainerFromHint,
-  FIELD_CONTAINER_SELECTORS
-} from "./formSemantics";
+  extractLinkedInEasyApplyFields,
+  findLinkedInEasyApplyRoot
+} from "./linkedinForm";
 
 const FIELD_SELECTOR =
   "textarea, input[type='text'], input[type='email'], input[type='url'], input[type='tel'], input[type='number'], input[type='checkbox'], input[type='radio'], input[type='file'], input:not([type]), select, [contenteditable='true']";
@@ -33,8 +37,14 @@ const FIELD_SELECTOR =
 const knownFieldIds = new Set<string>();
 let dependencyParents: FieldCategory[] = [];
 
-export function extractDetectedFields(platform: string): DetectedField[] {
-  const fields = Array.from(document.querySelectorAll<HTMLElement>(FIELD_SELECTOR));
+export function extractDetectedFields(platform: string, scopeRoot?: ParentNode | null): DetectedField[] {
+  const root = scopeRoot ?? document;
+  const linkedInRoot = !scopeRoot && /linkedin\.com/i.test(window.location.hostname)
+    ? findLinkedInEasyApplyRoot()
+    : null;
+  const queryRoot = linkedInRoot ?? root;
+
+  const fields = Array.from(queryRoot.querySelectorAll<HTMLElement>(FIELD_SELECTOR));
   const seen = new Set<string>();
   const processedRadioGroups = new Set<string>();
   const result: DetectedField[] = [];
@@ -71,7 +81,7 @@ export function extractDetectedFields(platform: string): DetectedField[] {
       label: label || "Unlabeled field",
       normalizedLabel,
       fieldType,
-      options: extractOptions(element),
+      options: extractOptions(element, queryRoot),
       required: isRequired(element),
       value: getFieldValue(element),
       isVisible: isElementVisible(element),
@@ -84,8 +94,14 @@ export function extractDetectedFields(platform: string): DetectedField[] {
     knownFieldIds.add(fieldId);
   }
 
-  extractButtonChoiceGroups(platform, seen, result);
+  extractButtonChoiceGroups(platform, seen, result, queryRoot);
   result.forEach((field) => knownFieldIds.add(field.fieldId));
+
+  if (linkedInRoot) {
+    const linkedInFields = extractLinkedInEasyApplyFields(platform);
+    return dedupeDetectedFields([...linkedInFields, ...result]);
+  }
+
   return dedupeDetectedFields(result);
 }
 
@@ -252,7 +268,7 @@ function getFieldType(element: HTMLElement): FieldType {
   return "unknown";
 }
 
-function extractOptions(element: HTMLElement): string[] | undefined {
+function extractOptions(element: HTMLElement, scopeRoot: ParentNode = document): string[] | undefined {
   if (element instanceof HTMLSelectElement) {
     return uniqueStrings(
       Array.from(element.options)
@@ -262,7 +278,9 @@ function extractOptions(element: HTMLElement): string[] | undefined {
   }
   if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
     return uniqueStrings(
-      Array.from(document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`))
+      Array.from(
+        scopeRoot.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
+      )
         .map((radio) => extractFieldLabel(radio) || radio.value)
         .filter(Boolean)
     );
