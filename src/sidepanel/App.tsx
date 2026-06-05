@@ -487,6 +487,8 @@ export function App() {
       await sendToActiveTab({ type: "SET_DYNAMIC_WATCH", enabled: value });
       setScan((current) => current ? { ...current, watching: value } : current);
     } catch (error) {
+      // The page never accepted the change — revert the toggle so it doesn't lie.
+      setWatchDynamic(!value);
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     }
   }
