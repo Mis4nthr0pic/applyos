@@ -3,6 +3,7 @@ import type { SiteAdapter } from "./types";
 import { ashbyAdapter } from "./ashby";
 import { bambooHrAdapter } from "./bamboohr";
 import { customCareersAdapter } from "./customCareers";
+import { gemAdapter } from "./gem";
 import { genericAdapter } from "./generic";
 import { greenhouseAdapter } from "./greenhouse";
 import { icimsAdapter } from "./icims";
@@ -16,6 +17,7 @@ import { workdayAdapter } from "./workday";
 
 export const adapters: SiteAdapter[] = [
   ashbyAdapter,
+  gemAdapter,
   greenhouseAdapter,
   leverAdapter,
   linkedinAdapter,

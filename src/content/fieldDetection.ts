@@ -1,13 +1,17 @@
 import {
   extractQuestionLabel,
+  extractStackedFieldLabel,
   findFieldContainer,
   findNearbyHeading,
   hashString,
   isManagedChoiceInput,
   resolveFieldContainerFromHint,
-  FIELD_CONTAINER_SELECTORS
+  FIELD_CONTAINER_SELECTORS,
+  findNativeRadioGroupScope,
+  extractRadioGroupQuestionLabel
 } from "./formSemantics";
 import { dedupeDetectedFields } from "../shared/dedupeFields";
+import { ashbySystemFieldCategory } from "../shared/ashbyFields";
 import type { DetectedField, FieldCategory, FieldType, InsertResult } from "../shared/types";
 import type { FieldWidget } from "../shared/profileFieldValue";
 import { normalizeText, optionMatches, optionMatchesCountry, uniqueStrings } from "./text";
@@ -32,6 +36,9 @@ import {
   extractLinkedInEasyApplyFields,
   findLinkedInEasyApplyRoot
 } from "./linkedinForm";
+import { setControlledInputValue } from "./controlledInput";
+import { setControlledInputValueInPageWorld } from "./pageWorldInput";
+import { isReactControlledFormHost } from "../shared/reactFormHosts";
 import { resolveFieldWidget } from "./fieldWidgets";
 
 const FIELD_SELECTOR =
@@ -40,12 +47,36 @@ const FIELD_SELECTOR =
 const knownFieldIds = new Set<string>();
 let dependencyParents: FieldCategory[] = [];
 
+function clearCollidingApplyosFieldIds(root: ParentNode): void {
+  const seen = new Map<string, HTMLElement>();
+  root.querySelectorAll<HTMLElement>("[data-applyos-field-id]").forEach((element) => {
+    const id = element.dataset.applyosFieldId;
+    if (!id) return;
+    const previous = seen.get(id);
+    if (previous) {
+      delete previous.dataset.applyosFieldId;
+      delete element.dataset.applyosFieldId;
+      return;
+    }
+    seen.set(id, element);
+  });
+}
+
 export function extractDetectedFields(platform: string, scopeRoot?: ParentNode | null): DetectedField[] {
   const root = scopeRoot ?? document;
+  if (/jobs\.gem\.com/i.test(window.location.hostname) || platform === "gem") {
+    clearCollidingApplyosFieldIds(root);
+  }
   const linkedInRoot = !scopeRoot && /linkedin\.com/i.test(window.location.hostname)
     ? findLinkedInEasyApplyRoot()
     : null;
   const queryRoot = linkedInRoot ?? root;
+
+  // Run the LinkedIn-specific pass FIRST so it tags each native control with its
+  // `applyos-li-*` id before the generic loop sees them. The generic loop then
+  // reuses those ids (via getOrCreateFieldId), so dedupeDetectedFields collapses
+  // the two passes instead of emitting every Easy Apply field twice.
+  const linkedInFields = linkedInRoot ? extractLinkedInEasyApplyFields(platform) : [];
 
   const fields = Array.from(queryRoot.querySelectorAll<HTMLElement>(FIELD_SELECTOR));
   const seen = new Set<string>();
@@ -56,8 +87,9 @@ export function extractDetectedFields(platform: string, scopeRoot?: ParentNode |
     if (shouldIgnoreField(element)) continue;
 
     if (element instanceof HTMLInputElement && element.type === "radio") {
-      if (!element.name || processedRadioGroups.has(element.name)) continue;
-      processedRadioGroups.add(element.name);
+      const groupKey = getRadioGroupKey(element);
+      if (!groupKey || processedRadioGroups.has(groupKey)) continue;
+      processedRadioGroups.add(groupKey);
     }
 
     const fieldId = getOrCreateFieldId(element);
@@ -68,11 +100,11 @@ export function extractDetectedFields(platform: string, scopeRoot?: ParentNode |
         : extractFieldLabel(element);
     const fieldType = getFieldType(element);
     const normalizedLabel = normalizeText(label);
-    const category = classifyField(label, fieldType);
+    const category = ashbySystemFieldCategory(element) ?? classifyField(label, fieldType);
     const widget = resolveFieldWidget(element, label || "");
     const duplicateKey =
-      element instanceof HTMLInputElement && element.type === "radio" && element.name
-        ? `radio:${element.name}`
+      element instanceof HTMLInputElement && element.type === "radio"
+        ? `radio:${getRadioGroupKey(element) || element.name || fieldId}`
         : `${selectorHint}:${fieldId}`;
     if (seen.has(duplicateKey)) continue;
     seen.add(duplicateKey);
@@ -103,7 +135,6 @@ export function extractDetectedFields(platform: string, scopeRoot?: ParentNode |
   result.forEach((field) => knownFieldIds.add(field.fieldId));
 
   if (linkedInRoot) {
-    const linkedInFields = extractLinkedInEasyApplyFields(platform);
     return dedupeDetectedFields([...linkedInFields, ...result]);
   }
 
@@ -170,34 +201,62 @@ function isRadioFieldAccessible(radio: HTMLInputElement): boolean {
   return false;
 }
 
+function buildAnonymousFieldIdentity(element: HTMLElement): string {
+  const label = extractStackedFieldLabel(element) || extractFieldLabel(element);
+  return [
+    element.tagName,
+    element.getAttribute("type") || "",
+    String(domIndex(element)),
+    hashString(normalizeText(label).slice(0, 200) || `idx-${domIndex(element)}`)
+  ].join("|");
+}
+
 function getOrCreateFieldId(element: HTMLElement): string {
-  if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
-    const existing = document.querySelector<HTMLInputElement>(
-      `input[type="radio"][name="${CSS.escape(element.name)}"][data-applyos-field-id]`
-    );
-    if (existing?.dataset.applyosFieldId) return existing.dataset.applyosFieldId;
-    const fieldId = `applyos-radio-${hashString(element.name)}`;
-    document
-      .querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
-      .forEach((radio) => {
+  if (element instanceof HTMLInputElement && element.type === "radio") {
+    const groupKey = element.name || getRadioGroupKey(element);
+    if (groupKey) {
+      const selector = element.name
+        ? `input[type="radio"][name="${CSS.escape(element.name)}"][data-applyos-field-id]`
+        : `input[type="radio"][data-applyos-radio-group="${CSS.escape(groupKey)}"][data-applyos-field-id]`;
+      const existing = document.querySelector<HTMLInputElement>(selector);
+      if (existing?.dataset.applyosFieldId) return existing.dataset.applyosFieldId;
+      const fieldId = element.name
+        ? `applyos-radio-${hashString(element.name)}`
+        : `applyos-radio-${hashString(groupKey)}`;
+      const scope = element.name
+        ? document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
+        : findNativeRadioGroupScope(element)?.querySelectorAll<HTMLInputElement>('input[type="radio"]') ??
+          [element];
+      scope.forEach((radio) => {
         radio.dataset.applyosFieldId = fieldId;
+        if (!element.name) radio.dataset.applyosRadioGroup = groupKey;
       });
-    return fieldId;
+      return fieldId;
+    }
   }
 
   const existing = element.dataset.applyosFieldId;
-  if (existing) return existing;
-  const base = [
-    element.tagName,
-    element.getAttribute("type"),
-    element.id,
-    element.getAttribute("name"),
-    element.getAttribute("aria-label"),
-    element.getAttribute("placeholder")
-  ]
-    .filter(Boolean)
-    .join("|");
-  const fieldId = `applyos-${hashString(base || `${element.tagName}-${domIndex(element)}`)}`;
+  if (existing) {
+    const tagged = document.querySelectorAll<HTMLElement>(`[data-applyos-field-id="${CSS.escape(existing)}"]`);
+    if (tagged.length === 1 && tagged[0] === element) return existing;
+    delete element.dataset.applyosFieldId;
+  }
+
+  const hasStableIdentity = Boolean(element.id || element.getAttribute("name"));
+  const base = hasStableIdentity
+    ? [
+        element.tagName,
+        element.getAttribute("type"),
+        element.id,
+        element.getAttribute("name"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("placeholder")
+      ]
+        .filter(Boolean)
+        .join("|")
+    : buildAnonymousFieldIdentity(element);
+
+  const fieldId = `applyos-${hashString(base)}`;
   element.dataset.applyosFieldId = fieldId;
   return fieldId;
 }
@@ -220,7 +279,23 @@ function createSelectorHint(element: HTMLElement, fieldId: string): string {
   return `[data-applyos-field-id="${fieldId}"]`;
 }
 
+function getRadioGroupKey(radio: HTMLInputElement): string {
+  if (radio.name) return radio.name;
+  const scope = findNativeRadioGroupScope(radio);
+  if (scope) {
+    const ids = Array.from(scope.querySelectorAll('input[type="radio"]'))
+      .map((item) => item.id || item.outerHTML)
+      .sort()
+      .join("|");
+    return `unnamed:${hashString(ids)}`;
+  }
+  return radio.id ? `unnamed:${radio.id}` : "";
+}
+
 function extractRadioGroupLabel(radio: HTMLInputElement): string {
+  const gemLabel = extractRadioGroupQuestionLabel(radio);
+  if (gemLabel.length >= 8) return gemLabel;
+
   const container = findFieldContainer(radio) ?? radio.closest("fieldset, [role='radiogroup'], [role='group']");
   if (container instanceof HTMLElement) {
     const label = extractQuestionLabel(container, radio);
@@ -476,6 +551,25 @@ export async function insertFieldValueAsync(
     return insertComboboxValue(element, value, widget);
   }
 
+  const insertTarget =
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+      ? element
+      : resolveInsertTarget(element);
+
+  if (
+    (insertTarget instanceof HTMLInputElement || insertTarget instanceof HTMLTextAreaElement) &&
+    isReactControlledFormHost(undefined, window.location.hostname)
+  ) {
+    try {
+      await setControlledInputValueInPageWorld(insertTarget, value);
+      return { ok: true };
+    } catch {
+      // Fall back to isolated-world insert.
+    }
+  }
+
   return insertFieldValueSync(fieldId, selectorHint, value, widget);
 }
 
@@ -511,6 +605,9 @@ function insertFieldValueSync(
     const option = findSelectOption(element, value, _widgetHint);
     if (!option) return { ok: false, error: `No confident dropdown option match for "${value}".` };
     setNativeValue(element, option.value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.blur();
   } else if (element instanceof HTMLInputElement && element.type === "checkbox") {
     const shouldCheck = /^(true|yes|1|checked)$/i.test(value);
     if (element.checked !== shouldCheck) element.click();
@@ -519,14 +616,12 @@ function insertFieldValueSync(
     element.innerText = value;
     element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
   } else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    setNativeValue(element, value);
+    setControlledInputValue(element, value);
+    return { ok: true };
   } else {
     return { ok: false, error: "This field type is not supported for insertion." };
   }
 
-  element.dispatchEvent(new Event("input", { bubbles: true }));
-  element.dispatchEvent(new Event("change", { bubbles: true }));
-  element.blur();
   return { ok: true };
 }
 

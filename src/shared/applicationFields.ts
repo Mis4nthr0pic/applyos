@@ -1,3 +1,4 @@
+import { extractPrimaryQuestionFromLabel } from "./answerBankQuestions";
 import { isPollutedProfileQuestionLabel, isProfileLinkField } from "./profileLinkFields";
 import { EXPERIENCE_QUESTION_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "./constants";
 import type { DetectedField, FieldCategory } from "./types";
@@ -7,13 +8,13 @@ const APPLICATION_LABEL_PATTERNS: Array<[FieldCategory, RegExp]> = [
   ["about_me", /\b(tell us about yourself|about you|introduce yourself|professional summary|tell us what you|what you.re great|great at|ideal role for you|strengths)\b/i],
   [
     "why_role",
-    /\b(ideal role|what role|great at|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change|why.*leave|motivation|why.*role|why.*position)\b/i
+    /\b(ideal role|what role|great at|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change|why.*leave|motivation|why.*role|why.*position|most important thing)\b/i
   ],
   ["why_company", /\b(why.*(company|us|join|team|organization)|interest.*company|why do you want)\b/i],
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation|technical)\b/i],
   [
     "custom_question",
-    /\b(what visa|which visa|visa are you currently|how many|years of (?:work )?experience|years.*experience with|global markets|salary expectation|notice period|earliest start|anything else we should know)\b/i
+    /\b(what visa|which visa|visa are you currently|how many|years of (?:work )?experience|years.*experience with|global markets|salary expectation|notice period|earliest start|anything else we should know|how did you hear|where are you based)\b/i
   ]
 ];
 
@@ -27,6 +28,13 @@ function isPollutedProfileLabel(label: string): boolean {
 }
 
 function isMisclassifiedProfileQuestion(field: DetectedField): boolean {
+  if (
+    field.fieldType === "textarea" &&
+    field.category === "linkedin" &&
+    !/\b(url|link)\b/i.test(field.label)
+  ) {
+    return true;
+  }
   if (!field.category || !SAFE_PROFILE_CATEGORIES.includes(field.category)) return false;
   if (looksLikeNamedCustomAnswer(field)) return true;
   if (isPollutedProfileLabel(field.label)) return true;
@@ -108,21 +116,7 @@ export function normalizeApplicationField(field: DetectedField): DetectedField {
   };
 }
 
-function extractPrimaryQuestionFromLabel(label: string): string {
-  const parts = label
-    .split(/\?(?=\s|$)/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length > 1) {
-    const questionPart = parts.find((part) => /\b(reason|change|how many|visa|global markets|why|what)\b/i.test(part));
-    if (questionPart) return `${questionPart}?`.replace(/\*+$/, "").trim();
-  }
-
-  const withoutProfilePrefix = label
-    .replace(/^(linkedin profile|github profile|github\/gitlab profile url)\s+/i, "")
-    .trim();
-  return withoutProfilePrefix || label;
-}
+export { extractPrimaryQuestionFromLabel } from "./answerBankQuestions";
 
 export function getApplicationQuestionFields(fields: DetectedField[]): DetectedField[] {
   return fields.filter(isApplicationQuestionField).map(normalizeApplicationField);

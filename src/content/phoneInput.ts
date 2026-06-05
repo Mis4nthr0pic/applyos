@@ -1,17 +1,7 @@
 import type { InsertResult } from "../shared/types";
 import { parsePhoneNumber, type ParsedPhone } from "../shared/phoneFormat";
 import { optionMatches, optionMatchesCountry } from "./text";
-
-function dispatchInputEvents(element: HTMLElement): void {
-  element.dispatchEvent(new Event("input", { bubbles: true }));
-  element.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
-function setNativeInputValue(element: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  setter?.call(element, value);
-  dispatchInputEvents(element);
-}
+import { setControlledInputValue } from "./controlledInput";
 
 export function isCompositePhoneInput(element: HTMLElement): boolean {
   return (
@@ -108,9 +98,7 @@ function selectItiCountry(phoneInput: HTMLInputElement, parsed: ParsedPhone): bo
 }
 
 function setNationalPhoneNumber(phoneInput: HTMLInputElement, national: string): void {
-  phoneInput.focus();
-  setNativeInputValue(phoneInput, national);
-  phoneInput.blur();
+  setControlledInputValue(phoneInput, national);
 }
 
 export function insertPhoneFieldValue(

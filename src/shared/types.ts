@@ -198,6 +198,12 @@ export interface UserProfile {
   visaSponsorship?: string;
   salaryExpectation?: string;
   startDate?: string;
+  /** School / university for "Where did you go for college?" style questions. */
+  education?: string;
+  /** Default for "How did you hear about us?" (e.g. LinkedIn). */
+  referralSource?: string;
+  /** Default Yes/No for in-office / on-site preference questions. */
+  inOfficePreference?: string;
 }
 
 export type AnswerCategory =

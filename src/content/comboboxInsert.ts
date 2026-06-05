@@ -1,5 +1,6 @@
 import type { FieldWidget } from "../shared/profileFieldValue";
 import type { InsertResult } from "../shared/types";
+import { setControlledInputValue } from "./controlledInput";
 import { optionMatches, optionMatchesCountry, optionMatchesLocation } from "./text";
 import {
   findComboboxRoot,
@@ -12,10 +13,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function setNativeInputValue(element: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  setter?.call(element, value);
-  element.dispatchEvent(new Event("input", { bubbles: true }));
-  element.dispatchEvent(new Event("change", { bubbles: true }));
+  setControlledInputValue(element, value);
 }
 
 function openCombobox(element: HTMLInputElement): void {
@@ -29,10 +27,36 @@ function openCombobox(element: HTMLInputElement): void {
   element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
-function collectListboxOptions(): HTMLElement[] {
+/**
+ * Resolve the listbox that belongs to THIS combobox. React-select and ARIA
+ * comboboxes link the input to their menu via aria-controls/aria-owns, which
+ * holds even when the menu is portaled to <body>. Returns null when no link can
+ * be established (the caller then has to fall back to a document-wide scan).
+ */
+function resolveActiveListbox(element: HTMLInputElement): HTMLElement | null {
+  const root = findComboboxRoot(element) ?? element;
+  const combobox =
+    root instanceof HTMLElement && root.matches('[role="combobox"]')
+      ? root
+      : root.querySelector<HTMLElement>('[role="combobox"]');
+  for (const owner of [element, combobox]) {
+    const id = owner?.getAttribute("aria-controls") || owner?.getAttribute("aria-owns");
+    const target = id ? document.getElementById(id) : null;
+    if (target) {
+      return target.matches('[role="listbox"]')
+        ? target
+        : target.querySelector<HTMLElement>('[role="listbox"]') ?? target;
+    }
+  }
+  // Menus rendered inside the combobox root (not portaled).
+  return root instanceof HTMLElement ? root.querySelector<HTMLElement>('[role="listbox"]') : null;
+}
+
+function collectListboxOptions(scope?: HTMLElement | null): HTMLElement[] {
+  const container: ParentNode = scope ?? document;
   const options = [
-    ...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]'),
-    ...document.querySelectorAll<HTMLElement>('[role="option"]')
+    ...container.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]'),
+    ...container.querySelectorAll<HTMLElement>('[role="option"]')
   ];
   const seen = new Set<HTMLElement>();
   return options.filter((option) => {
@@ -73,6 +97,11 @@ function pickTypeaheadSeed(value: string, widget: FieldWidget | undefined): stri
   return trimmed;
 }
 
+function looksLikeProfileUrl(value: string): boolean {
+  const trimmed = value.trim();
+  return /^https?:\/\//i.test(trimmed) || /\.\w{2,}\//.test(trimmed) || /linkedin\.com|github\.com/i.test(trimmed);
+}
+
 export async function insertComboboxValue(
   element: HTMLInputElement,
   value: string,
@@ -82,25 +111,28 @@ export async function insertComboboxValue(
 
   openCombobox(element);
 
-  let options = collectListboxOptions();
-  let target = findMatchingOption(options, value, widget);
-  if (target) {
-    clickOption(target);
-    await sleep(150);
-    const display = readComboboxDisplayValue(element);
-    if (display) return { ok: true };
+  // Pre-type match: only when we can positively tie a listbox to THIS combobox,
+  // so we never click a leftover option from another widget that opened earlier.
+  const earlyScope = resolveActiveListbox(element);
+  if (earlyScope) {
+    const earlyTarget = findMatchingOption(collectListboxOptions(earlyScope), value, widget);
+    if (earlyTarget) {
+      clickOption(earlyTarget);
+      await sleep(150);
+      if (readComboboxDisplayValue(element)) return { ok: true };
+    }
   }
 
   const seed = pickTypeaheadSeed(value, widget);
   setNativeInputValue(element, seed);
   await sleep(650);
 
-  options = collectListboxOptions();
-  target = findMatchingOption(options, value, widget);
+  let options = collectListboxOptions(resolveActiveListbox(element));
+  let target = findMatchingOption(options, value, widget);
   if (!target && widget === "location_autocomplete") {
     target = findMatchingOption(options, seed, widget);
   }
-  if (!target && options.length === 1) {
+  if (!target && options.length === 1 && !looksLikeProfileUrl(value)) {
     target = options[0];
   }
 

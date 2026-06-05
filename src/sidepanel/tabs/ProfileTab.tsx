@@ -9,9 +9,11 @@ export function ProfileTab({ profile, onSave }: { profile?: UserProfile; onSave:
     ["firstName", "First name", "text"], ["lastName", "Last name", "text"], ["fullName", "Full name", "text"],
     ["email", "Email", "email"],     ["phone", "Phone", "tel"], ["country", "Country", "text"],
     ["state", "State / Province", "text"], ["city", "City (for location search)", "text"],
-    ["location", "Full location (free text)", "text"], ["linkedinUrl", "LinkedIn URL", "url"],
+    ["location", "Full location (free text)", "text"],     ["linkedinUrl", "LinkedIn URL", "url"],
     ["githubUrl", "GitHub URL", "url"], ["portfolioUrl", "Portfolio URL", "url"], ["websiteUrl", "Website URL", "url"],
-    ["workAuthorization", "Work authorization", "text"], ["visaSponsorship", "Visa sponsorship", "text"],
+    ["education", "College / university", "text"], ["referralSource", "How did you hear about us?", "text"],
+    ["inOfficePreference", "In-office preference (Yes/No)", "text"],
+    ["workAuthorization", "Work authorization (Yes/No)", "text"], ["visaSponsorship", "Visa sponsorship (Yes/No)", "text"],
     ["salaryExpectation", "Salary expectation", "text"], ["startDate", "Start date", "text"]
   ];
   return (
@@ -29,7 +31,8 @@ export function ProfileTab({ profile, onSave }: { profile?: UserProfile; onSave:
         ))}
         <p className="muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
           Country is used for country pickers (e.g. Brazil (+55)). City is used when a form has a location
-          search. Full location is used for plain text location fields.
+          search. Full location is used for plain text location fields. Use Yes/No for work authorization,
+          visa sponsorship, and in-office questions on Ashby and similar forms.
         </p>
         <Button variant="primary" onClick={() => onSave({ ...draft, id: "default" })}>Save Profile</Button>
       </Card>

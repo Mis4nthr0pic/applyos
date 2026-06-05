@@ -18,13 +18,17 @@ const SENIORITY: Record<string, number> = {
 };
 
 function detectSeniority(text: string): number {
-  const normalized = normalizeText(text);
-  return Math.max(
-    2,
-    ...Object.entries(SENIORITY)
-      .filter(([label]) => normalized.includes(label))
-      .map(([, value]) => value)
-  );
+  // Match whole words only. Substring matching (`includes`) would let "lead"
+  // match "leading", "head" match "headcount", "sr"/"jr"/"mid" match countless
+  // unrelated words, all inflating the detected seniority.
+  const words = new Set(normalizeText(text).split(/[^a-z0-9+#]+/).filter(Boolean));
+  const matched = Object.entries(SENIORITY)
+    .filter(([label]) => words.has(label))
+    .map(([, value]) => value);
+  // No seniority keyword present -> treat as mid-level (neutral default). When a
+  // keyword *is* present, honor it even if it's below mid (e.g. intern/junior),
+  // instead of flooring every role to mid.
+  return matched.length ? Math.max(...matched) : 2;
 }
 
 function percent(value: number): number {

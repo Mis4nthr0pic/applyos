@@ -5,27 +5,27 @@ import { normalizeText } from "./text";
 const RULES: Array<[FieldCategory, RegExp]> = [
   ["first_name", /\b(first name|given name|forename)\b/],
   ["last_name", /\b(last name|family name|surname)\b/],
-  ["full_name", /\b(full name|your name)\b/],
+  ["full_name", /\b(full name|your name)\b|^name$/],
   ["email", /\b(e-?mail)\b/],
-  ["phone", /\b(phone|mobile|telephone)\b/],
-  ["country", /\b(country|nation|where do you currently live|country of residence|nationality)\b/],
-  ["state", /\b(state|province|region)\b/],
-  ["city", /\b(city|town|current location|your location|where are you located|^location$)\b/],
   ["linkedin", /\blinkedin\b/],
   ["github", /\b(github|gitlab)\b/],
+  ["portfolio", /\b(portfolio|work samples?)\b/],
+  ["website", /\b(personal website|website|web site)\b/],
   [
     "social_profile",
     /\b(discord|telegram|whatsapp|youtube|twitter|instagram|facebook|threads|tiktok|snapchat|twitch|reddit|stackoverflow|medium|substack|behance|dribbble|signal|wechat|mastodon|bluesky|bsky|claude|anthropic|chatgpt|chat gpt|openai|open ai|deepseek|openrouter|open router|gemini|google ai|bard|copilot|github copilot|perplexity|grok|xai|mistral|llama|meta ai|hugging face|huggingface|character ai|cohere|together ai|fireworks ai|replicate|midjourney|stable diffusion|dall-?e|cursor|groq|pi ai|inflection|ollama|poe|replit|phind|kimi|qwen|runway|elevenlabs)\b/
   ],
-  ["portfolio", /\b(portfolio|work samples?)\b/],
-  ["website", /\b(personal website|website|web site)\b/],
+  ["phone", /\b(phone|mobile|telephone)\b/],
+  ["country", /\b(country|nation|where do you currently live|country of residence|nationality)\b/],
+  ["state", /\b(state|province|region)\b/],
+  ["city", /\b(city|town|current location|your location|where are you located|where are you based|^location$)\b/],
   ["resume", /\b(resume|cv|curriculum vitae)\b/],
   ["cover_letter", /\b(cover letter)\b/],
   ["additional_file", /\b(additional file|attachment|supporting document)\b/],
-  ["why_company", /\b(why.*(company|us|join)|interest.*company)\b/],
+  ["why_company", /\b(why.*(company|us|join)|interest.*company|what excites you about)\b/],
   [
     "why_role",
-    /\b(why.*(role|position|job)|interest.*(role|position)|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change)\b/
+    /\b(why.*(role|position|job)|interest.*(role|position)|looking for a change|reason you are looking|whats reason|what s reason|why.*change|reason.*change|good fit for this role|most important thing)\b/
   ],
   ["about_me", /\b(tell us about yourself|about you|professional summary|introduce yourself|tell us what you|what you re great|great at|ideal role)\b/],
   ["hard_problem", /\b(hard|difficult|complex|challenging).*(problem|project|situation)\b/],
@@ -65,6 +65,14 @@ const RULES: Array<[FieldCategory, RegExp]> = [
 
 export function classifyField(label: string, fieldType: string): FieldCategory {
   const normalized = normalizeText(label);
+
+  if (
+    fieldType === "textarea" &&
+    /\blinkedin\b/i.test(normalized) &&
+    !/\b(url|link)\b/i.test(label)
+  ) {
+    return "custom_question";
+  }
 
   if (
     PROFILE_LINK_PLATFORM_PATTERN.test(normalized) &&

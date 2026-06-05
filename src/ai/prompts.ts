@@ -1,6 +1,8 @@
 import { ANSWER_WRITING_SYSTEM_PROMPT } from "./answerWritingPrompt";
+import { DE_AIIFY_INSTRUCTIONS } from "./deAiifyInstructions";
 
 export { ANSWER_WRITING_SYSTEM_PROMPT };
+export { DE_AIIFY_INSTRUCTIONS };
 
 export const BUILD_DATABASE_SYSTEM_PROMPT = `You merge multiple CV/resume versions for one person into a single optimized markdown experience database.
 
@@ -40,6 +42,7 @@ export const SMART_MATCH_SYSTEM_PROMPT =
 
 export type PromptKey =
   | "answerWriting"
+  | "deAiify"
   | "buildDatabase"
   | "cvSummarize"
   | "cvRecommendation"
@@ -53,8 +56,14 @@ export const PROMPT_CATALOG: Record<
 > = {
   answerWriting: {
     label: "Answer writing (Generate All Answers)",
-    description: "System prompt for batch application answers with humanizer rules.",
+    description: "Core system prompt: facts-only rules, batch format, JSON output.",
     default: ANSWER_WRITING_SYSTEM_PROMPT,
+    editable: true
+  },
+  deAiify: {
+    label: "De-AI-ify (human voice)",
+    description: "Appended to every AI-generated application answer. Removes jargon, cover-letter tone, and chatbot patterns.",
+    default: DE_AIIFY_INSTRUCTIONS,
     editable: true
   },
   buildDatabase: {
@@ -102,4 +111,11 @@ export function resolvePrompt(
   const override = settings.promptOverrides?.[key]?.trim();
   if (override) return override;
   return PROMPT_CATALOG[key].default;
+}
+
+/** Full system prompt for batch application answers (core + de-AI-ify). */
+export function resolveAnswerWritingPrompt(settings: {
+  promptOverrides?: Partial<Record<PromptKey, string>>;
+}): string {
+  return `${resolvePrompt(settings, "answerWriting")}\n\n${resolvePrompt(settings, "deAiify")}`;
 }

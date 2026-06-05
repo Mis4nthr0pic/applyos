@@ -1,5 +1,7 @@
 import type { DetectedField, UserProfile } from "./types";
+import { SAFE_PROFILE_CATEGORIES } from "./constants";
 import { formatPhoneForProfile } from "./phoneFormat";
+import { isProfileLinkField, labelRequestsProfileLink } from "./profileLinkFields";
 
 export type FieldWidget =
   | "default"
@@ -18,7 +20,9 @@ export function inferFieldWidget(label: string, elementHint?: string): FieldWidg
   const normalized = label.trim();
   const hint = elementHint ?? "";
 
-  if (/phone-input__country|#country\.select__input/i.test(hint)) {
+  if (labelRequestsProfileLink(normalized)) return "default";
+
+  if (/phone-input__country/i.test(hint) || /#country\.select__input/i.test(hint)) {
     return "country_dropdown";
   }
   if (COUNTRY_LABEL.test(normalized)) return "country_dropdown";
@@ -43,11 +47,41 @@ export function formatCompositeLocation(profile: UserProfile): string | undefine
   return parts.join(", ");
 }
 
+function resolveFullName(profile: UserProfile): string | undefined {
+  if (profile.fullName?.trim()) return profile.fullName.trim();
+  const parts = [profile.firstName, profile.lastName].map((part) => part?.trim()).filter(Boolean);
+  if (parts.length) return parts.join(" ");
+  return undefined;
+}
+
+function resolveRecurringQuestionValue(field: DetectedField, profile: UserProfile): string | undefined {
+  if (field.category && SAFE_PROFILE_CATEGORIES.includes(field.category)) return undefined;
+
+  const label = field.label.trim();
+  if (!label) return undefined;
+
+  if (/\bhow did you hear\b/i.test(label)) return pickProfileString(profile.referralSource);
+  if (/\b(where did you go for college|college|university|school you attended)\b/i.test(label)) {
+    return pickProfileString(profile.education);
+  }
+  if (/\b(in[- ]office|on[- ]site|days a week)\b/i.test(label)) {
+    return pickProfileString(profile.inOfficePreference);
+  }
+  return undefined;
+}
+
 export function profileValueForFieldWithWidget(
   field: DetectedField,
   profile?: UserProfile
 ): string | undefined {
   if (!profile) return undefined;
+
+  const profileLinkValue = resolveProfileLinkValue(field, profile);
+  if (profileLinkValue !== undefined) return profileLinkValue;
+  if (labelRequestsProfileLink(field.label, field.fieldType)) return undefined;
+
+  const recurring = resolveRecurringQuestionValue(field, profile);
+  if (recurring) return recurring;
 
   const widget = field.widget ?? inferFieldWidget(field.label, field.selectorHint);
 
@@ -94,6 +128,7 @@ export function profileValueForFieldWithWidget(
 
   const key = field.category ? map[field.category] : undefined;
   if (key === "phone") return formatPhoneForProfile(profile.phone, profile.country);
+  if (key === "fullName") return resolveFullName(profile);
   const value = key ? profile[key] : undefined;
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -103,5 +138,32 @@ function pickProfileString(...candidates: Array<string | undefined>): string | u
     const trimmed = candidate?.trim();
     if (trimmed) return trimmed;
   }
+  return undefined;
+}
+
+const PROFILE_LINK_BY_CATEGORY: Partial<Record<string, keyof UserProfile>> = {
+  linkedin: "linkedinUrl",
+  github: "githubUrl",
+  portfolio: "portfolioUrl",
+  website: "websiteUrl"
+};
+
+function resolveProfileLinkValue(field: DetectedField, profile: UserProfile): string | undefined {
+  const fromCategory = field.category ? PROFILE_LINK_BY_CATEGORY[field.category] : undefined;
+  if (fromCategory) {
+    const value = profile[fromCategory];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    return undefined;
+  }
+
+  if (!labelRequestsProfileLink(field.label, field.fieldType)) {
+    return undefined;
+  }
+
+  const label = field.label;
+  if (/\blinkedin\b/i.test(label)) return pickProfileString(profile.linkedinUrl);
+  if (/\b(github|gitlab)\b/i.test(label)) return pickProfileString(profile.githubUrl);
+  if (/\bportfolio\b/i.test(label)) return pickProfileString(profile.portfolioUrl);
+  if (/\b(personal website|website|web site)\b/i.test(label)) return pickProfileString(profile.websiteUrl);
   return undefined;
 }

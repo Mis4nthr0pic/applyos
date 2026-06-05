@@ -1,5 +1,6 @@
 import type { FieldWidget } from "../shared/profileFieldValue";
 import { inferFieldWidget } from "../shared/profileFieldValue";
+import { labelRequestsProfileLink } from "../shared/profileLinkFields";
 import { isComboboxInput } from "./combobox";
 import { isPhoneWidgetChrome } from "./phoneInput";
 
@@ -16,6 +17,8 @@ export function buildWidgetHint(element: HTMLElement): string {
 }
 
 export function resolveFieldWidget(element: HTMLElement, label: string): FieldWidget {
+  if (labelRequestsProfileLink(label)) return "default";
+
   if (isPhoneWidgetChrome(element) || element.closest(".phone-input__country")) {
     return "country_dropdown";
   }

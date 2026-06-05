@@ -52,7 +52,9 @@ export function optionMatchesCountry(left: string, right: string): boolean {
   const country = normalizeText(right);
   const option = normalizeText(left);
   if (!country || !option) return false;
-  if (option.startsWith(`${country} `) || option.startsWith(country)) return true;
+  // Require a word boundary after the country name so "oman" doesn't match
+  // "Omani Rial" and "guinea" only matches when followed by a separator.
+  if (option === country || option.startsWith(`${country} `)) return true;
   const dial = left.match(/\(\+?(\d{1,4})\)/)?.[1];
   const rightDial = right.match(/\(\+?(\d{1,4})\)/)?.[1];
   if (dial && rightDial && dial === rightDial) return true;

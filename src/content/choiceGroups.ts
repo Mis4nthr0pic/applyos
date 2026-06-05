@@ -5,6 +5,7 @@ import {
   extractQuestionLabel,
   findButtonRow,
   findFieldContainer,
+  findNativeRadioGroupScope,
   getStableFieldKey,
   hashString
 } from "./formSemantics";
@@ -233,11 +234,6 @@ export function readButtonGroupValue(entry: HTMLElement): string {
   return "";
 }
 
-/** @deprecated Use readButtonGroupValue */
-export function readYesNoButtonGroupValue(entry: HTMLElement): string {
-  return readButtonGroupValue(entry);
-}
-
 export function readAriaRadioGroupValue(group: HTMLElement): string {
   const checked = group.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]');
   if (checked) return getChoiceOptionText(checked);
@@ -380,10 +376,16 @@ export function insertNativeRadioGroupValue(element: HTMLElement, value: string)
 }
 
 function collectNativeRadios(element: HTMLElement): HTMLInputElement[] {
-  if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
-    return Array.from(
-      document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
-    );
+  if (element instanceof HTMLInputElement && element.type === "radio") {
+    if (element.name) {
+      return Array.from(
+        document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
+      );
+    }
+    const scope = findNativeRadioGroupScope(element);
+    if (scope) {
+      return Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
+    }
   }
 
   const scope =
@@ -391,7 +393,7 @@ function collectNativeRadios(element: HTMLElement): HTMLInputElement[] {
   if (!scope) return [];
 
   return Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="radio"]')).filter(
-    (radio) => radio.name
+    (radio) => radio.name || findNativeRadioGroupScope(radio) === scope
   );
 }
 

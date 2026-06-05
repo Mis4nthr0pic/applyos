@@ -1,9 +1,9 @@
-import { ANSWER_WRITING_SYSTEM_PROMPT } from "./answerWritingPrompt";
+import { throwIfAborted } from "./aiRequest";
 import {
   IMPROVE_JOB_SYSTEM_PROMPT,
   PARSE_CV_SYSTEM_PROMPT,
   SMART_MATCH_SYSTEM_PROMPT,
-  resolvePrompt
+  resolveAnswerWritingPrompt
 } from "./prompts";
 import { resolveOpenRouterModel } from "../shared/openRouterModels";
 import type {
@@ -36,10 +36,12 @@ interface OpenRouterResponse {
 export async function callOpenRouterJson(
   settings: Settings,
   system: string,
-  user: string
+  user: string,
+  signal?: AbortSignal
 ): Promise<unknown> {
   if (settings.localOnlyMode) throw new Error("Local-only mode is enabled.");
   if (!settings.openRouterApiKey) throw new Error("Add an OpenRouter API key in Settings.");
+  throwIfAborted(signal);
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -48,6 +50,7 @@ export async function callOpenRouterJson(
       "Content-Type": "application/json",
       "X-Title": "ApplyOS"
     },
+    signal,
     body: JSON.stringify({
       model: resolveOpenRouterModel(settings.openRouterModel),
       temperature: 0,
@@ -59,7 +62,17 @@ export async function callOpenRouterJson(
     })
   });
 
-  const payload = (await response.json()) as OpenRouterResponse;
+  // Read the body as text first: gateway/5xx errors often return an HTML page,
+  // and calling response.json() on that throws a raw SyntaxError that masks the
+  // real HTTP status.
+  const rawBody = await response.text();
+  let payload: OpenRouterResponse = {};
+  try {
+    payload = rawBody ? (JSON.parse(rawBody) as OpenRouterResponse) : {};
+  } catch {
+    if (!response.ok) throw new Error(`OpenRouter request failed (${response.status}).`);
+    throw new Error("OpenRouter returned invalid JSON.");
+  }
   if (!response.ok) {
     throw new Error(payload.error?.message || `OpenRouter request failed (${response.status}).`);
   }
@@ -74,7 +87,8 @@ export async function callOpenRouterJson(
 
 export async function parseCvWithOpenRouter(
   cvText: string,
-  settings: Settings
+  settings: Settings,
+  signal?: AbortSignal
 ): Promise<Partial<ExperienceProfile>> {
   return (await callOpenRouterJson(
     settings,
@@ -105,13 +119,15 @@ export async function parseCvWithOpenRouter(
       certifications: [],
       languages: [],
       links: []
-    })}`
+    })}`,
+    signal
   )) as Partial<ExperienceProfile>;
 }
 
 export async function improveJobExtraction(
   description: string,
-  settings: Settings
+  settings: Settings,
+  signal?: AbortSignal
 ): Promise<Partial<JobInfo>> {
   return (await callOpenRouterJson(
     settings,
@@ -127,14 +143,16 @@ export async function improveJobExtraction(
       niceToHave: [],
       benefits: [],
       salaryRange: ""
-    })}`
+    })}`,
+    signal
   )) as Partial<JobInfo>;
 }
 
 export async function smartMatchAnswer(
   question: string,
   candidates: SavedAnswer[],
-  settings: Settings
+  settings: Settings,
+  signal?: AbortSignal
 ): Promise<{
   bestMatchId: string | null;
   category: string;
@@ -158,7 +176,8 @@ export async function smartMatchAnswer(
       confidence: 0,
       shouldUseSavedAnswer: false,
       reason: ""
-    })}`
+    })}`,
+    signal
   )) as {
     bestMatchId: string | null;
     category: string;
@@ -173,9 +192,12 @@ export async function suggestAllAnswersFromExperience(
   profile: ExperienceProfile,
   job: JobInfo,
   settings: Settings,
-  optimizedExperienceDatabase?: string
+  optimizedExperienceDatabase?: string,
+  signal?: AbortSignal
 ): Promise<BatchAnswerResult[]> {
   if (!questions.length) throw new Error("No application questions to answer.");
+
+  // Single OpenRouter request for the entire batch (de-AI-ify rules live in the system prompt).
 
   const useDatabase =
     settings.useOptimizedExperienceDatabase && optimizedExperienceDatabase?.trim();
@@ -198,7 +220,7 @@ export async function suggestAllAnswersFromExperience(
 
   const payload = (await callOpenRouterJson(
     settings,
-    resolvePrompt(settings, "answerWriting") || ANSWER_WRITING_SYSTEM_PROMPT,
+    resolveAnswerWritingPrompt(settings),
     `Answer every application question below in one batch.
 
 ${experienceSection}
@@ -231,11 +253,12 @@ Instructions:
 4. For strengths / "what you're great at" / ideal role questions, combine Job search context with CV evidence to describe positioning and target roles. Do not return NO_FIT when that context is available.
 5. For "how many global markets" or similar count questions, estimate a reasonable integer from countries, regions, and markets mentioned across all CVs and experience (e.g. Portugal, Brazil, global Web3 community = multiple markets). Return only a plain number unless the field is clearly a long-text textarea.
 6. Only return NO_FIT when neither the CV/database nor Job search context provides enough to draft an honest answer.
-7. Apply the human voice rewrite process internally; return only final answer text in JSON.
+7. Apply De-AI-ify rules to every answer: form-box tone, no cover-letter voice, no banned words (seasoned, eager, leverage, aligns perfectly, etc.). Return only the final de-AI-ified text in JSON.
 8. For "how many" count fields, return only a plain number (e.g. "12"), not a sentence.
 9. Preserve each input fieldId exactly in your JSON response.
 
-Return JSON with an answers array containing exactly ${questions.length} entries, one per fieldId.`
+Return JSON with an answers array containing exactly ${questions.length} entries, one per fieldId.`,
+    signal
   )) as { answers?: BatchAnswerResult[] };
 
   const answers = payload.answers;

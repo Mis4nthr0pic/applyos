@@ -21,6 +21,7 @@ declare global {
 
 let observer: MutationObserver | undefined;
 let observerTimeout: number | undefined;
+let observerDebounce: number | undefined;
 let removeDependencyListeners: (() => void) | undefined;
 let stopFieldAutoCapture: (() => void) | undefined;
 let currentPlatform = "generic";
@@ -134,18 +135,25 @@ function startObserver(): void {
   stopObserver();
   removeDependencyListeners = attachDependencyListeners();
   observer = new MutationObserver(() => {
-    const scope =
-      currentPlatform === "linkedin" ? findLinkedInEasyApplyRoot() : null;
-    const fields = extractDetectedFields(currentPlatform, scope);
-    const signature = fieldSignature(fields);
-    if (signature !== lastFieldSignature) {
-      lastFieldSignature = signature;
-      notifyExtension({
-        type: "APPLYOS_FIELDS_CHANGED",
-        fields,
-        status: "Fields changed"
-      });
-    }
+    // Coalesce bursts of DOM mutations (spinners, focus rings, class/style
+    // churn) into one re-scan. extractDetectedFields is a full-subtree query, so
+    // running it on every mutation tick is wasteful.
+    if (observerDebounce) return;
+    observerDebounce = window.setTimeout(() => {
+      observerDebounce = undefined;
+      const scope =
+        currentPlatform === "linkedin" ? findLinkedInEasyApplyRoot() : null;
+      const fields = extractDetectedFields(currentPlatform, scope);
+      const signature = fieldSignature(fields);
+      if (signature !== lastFieldSignature) {
+        lastFieldSignature = signature;
+        notifyExtension({
+          type: "APPLYOS_FIELDS_CHANGED",
+          fields,
+          status: "Fields changed"
+        });
+      }
+    }, 300);
   });
   observer.observe(document.documentElement, {
     childList: true,
@@ -166,6 +174,8 @@ function stopObserver(): void {
   removeDependencyListeners = undefined;
   if (observerTimeout) window.clearTimeout(observerTimeout);
   observerTimeout = undefined;
+  if (observerDebounce) window.clearTimeout(observerDebounce);
+  observerDebounce = undefined;
 }
 
 function fieldSignature(fields: ReturnType<typeof extractDetectedFields>): string {

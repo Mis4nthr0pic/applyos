@@ -5,6 +5,7 @@ import type {
   InsertResult,
   UserProfile
 } from "../shared/types";
+import { isAiRequestAborted } from "../ai/aiRequest";
 
 export async function sendToActiveTab<T>(message: ContentMessage): Promise<T> {
   const response = (await chrome.runtime.sendMessage({
@@ -67,6 +68,7 @@ export async function readJsonFile(file: File): Promise<Record<string, unknown>>
 }
 
 export function getErrorMessage(error: unknown): string {
+  if (isAiRequestAborted(error)) return "AI request cancelled.";
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 

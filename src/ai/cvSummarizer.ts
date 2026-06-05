@@ -5,7 +5,8 @@ import { callOpenRouterJson } from "./openrouter";
 export async function summarizeCvWithOpenRouter(
   fileName: string,
   rawText: string,
-  settings: Settings
+  settings: Settings,
+  signal?: AbortSignal
 ): Promise<Partial<CvSource>> {
   const payload = (await callOpenRouterJson(
     settings,
@@ -17,7 +18,8 @@ export async function summarizeCvWithOpenRouter(
       keyStrengths: [],
       whenToUse: "",
       keywords: []
-    })}`
+    })}`,
+    signal
   )) as Partial<CvSource>;
 
   return {

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { buildOptimizedExperienceDatabase } from "../ai/buildExperienceDatabase";
+import { isAiRequestAborted } from "../ai/aiRequest";
 import { summarizeCvWithOpenRouter } from "../ai/cvSummarizer";
 import {
   improveJobExtraction,
@@ -37,6 +38,8 @@ import {
   uniqueApplicationQuestionFields
 } from "../shared/scanSuggestions";
 import { mergeFieldsFromFrame } from "../shared/dedupeFields";
+import { cleanupStoredAnswerBank } from "../shared/answerBankCleanup";
+import { sanitizeSavedQuestion, shouldRemoveSavedAnswer } from "../shared/answerBankQuestions";
 import { saveFieldAnswer } from "../shared/saveFieldAnswer";
 import { enrichCvSourceFromCatalog, heuristicCvSummary, recommendCvLocally } from "../matching/recommendCv";
 import type { CvRecommendation } from "../matching/recommendCv";
@@ -116,13 +119,45 @@ export function App() {
   const [loading, setLoading] = React.useState(false);
   const [aiGenerating, setAiGenerating] = React.useState(false);
   const [aiGeneratingLabel, setAiGeneratingLabel] = React.useState<string>();
+  const aiAbortRef = React.useRef<AbortController | null>(null);
   const [notice, setNotice] = React.useState<{ tone: "info" | "success" | "warning" | "danger"; text: string }>();
+
+  const beginAiRequest = React.useCallback((label: string): AbortSignal => {
+    aiAbortRef.current?.abort();
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    setAiGenerating(true);
+    setAiGeneratingLabel(label);
+    return controller.signal;
+  }, []);
+
+  const finishAiRequest = React.useCallback(() => {
+    aiAbortRef.current = null;
+    setAiGenerating(false);
+    setAiGeneratingLabel(undefined);
+  }, []);
+
+  const cancelAiRequest = React.useCallback(() => {
+    aiAbortRef.current?.abort();
+  }, []);
+
+  function handleAiError(error: unknown, fallback?: string): void {
+    if (isAiRequestAborted(error)) {
+      setNotice({ tone: "info", text: "AI request cancelled." });
+      return;
+    }
+    setNotice({ tone: "danger", text: fallback ?? getErrorMessage(error) });
+  }
 
   const settingsRef = React.useRef(settings);
   const userProfileRef = React.useRef(userProfile);
   const answersRef = React.useRef(answers);
   const suggestionsRef = React.useRef(suggestions);
+  const scanRef = React.useRef(scan);
 
+  React.useEffect(() => {
+    scanRef.current = scan;
+  }, [scan]);
   React.useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
@@ -231,15 +266,14 @@ export function App() {
     ) => {
       if (message.type === "APPLYOS_FIELDS_CHANGED" && message.fields) {
         const frameId = sender.frameId ?? 0;
-        setScan((current) =>
-          current
-            ? {
-                ...current,
-                fields: mergeFieldsFromFrame(current.fields, message.fields!, frameId),
-                watching: true
-              }
-            : current
-        );
+        const current = scanRef.current;
+        if (current) {
+          const mergedFields = mergeFieldsFromFrame(current.fields, message.fields, frameId);
+          setScan({ ...current, fields: mergedFields, watching: true });
+          // Rekey AI suggestions by label so generated answers survive the
+          // field-id churn a dynamic re-render can cause (mirrors handleScan).
+          setSuggestions((prev) => mergeScanSuggestions(prev, current.fields, mergedFields));
+        }
         const dynamicFields = message.fields.map((field) => ({
           ...field,
           frameId: field.frameId ?? frameId
@@ -340,7 +374,7 @@ export function App() {
       await updateQueueFromScan(nextResult, nextFit);
       const extractedNote = nextResult.jobInfoExtracted ? " Stored job info is attached for the model." : "";
       let noticeText = `Scanned ${nextResult.fields.length} fields with the ${nextResult.adapterName} adapter.${extractedNote}`;
-      if (settings.autoInsertFields && nextResult.fields.length) {
+      if (currentSettings.autoInsertFields && nextResult.fields.length) {
         const insertResult = await runAutoInsert(nextResult.fields);
         const insertSummary = insertResult ? autoInsertSummary(insertResult) : undefined;
         if (insertSummary) noticeText += ` ${insertSummary}.`;
@@ -353,21 +387,25 @@ export function App() {
         currentSettings.autoGenerateAnswersOnScan && aiConfigured && fieldsNeedingAi.length > 0;
 
       if (shouldRunAi) {
+        const signal = beginAiRequest(
+          `Drafting answers for ${fieldsNeedingAi.length} question${fieldsNeedingAi.length === 1 ? "" : "s"}…`
+        );
         try {
-          setAiGenerating(true);
-          setAiGeneratingLabel(
-            `Drafting answers for ${fieldsNeedingAi.length} question${fieldsNeedingAi.length === 1 ? "" : "s"}…`
-          );
           const generatedNote = await generateApplicationAnswers(nextResult, nextFit, {
             interactive: false,
             existingSuggestions: preservedSuggestions,
-            fieldsToAnswer: fieldsNeedingAi
+            fieldsToAnswer: fieldsNeedingAi,
+            signal
           });
           if (generatedNote) {
-            noticeText += generatedNote.startsWith("AI skipped") ? ` ${generatedNote}` : ` ${generatedNote}`;
+            noticeText += ` ${generatedNote}`;
           }
         } catch (error) {
-          noticeText += ` AI answer generation failed: ${getErrorMessage(error)}`;
+          if (isAiRequestAborted(error)) {
+            noticeText += " AI request cancelled.";
+          } else {
+            noticeText += ` AI answer generation failed: ${getErrorMessage(error)}`;
+          }
         }
       } else if (
         currentSettings.autoGenerateAnswersOnScan &&
@@ -392,8 +430,7 @@ export function App() {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
     } finally {
       setLoading(false);
-      setAiGenerating(false);
-      setAiGeneratingLabel(undefined);
+      finishAiRequest();
     }
   }
 
@@ -488,8 +525,16 @@ export function App() {
       let profile = parseExperienceLocally(rawText, sourceType);
       if (!settings.localOnlyMode && settings.openRouterApiKey && settings.allowRawCvForExtraction) {
         if (!confirmData("CV text will be sent to OpenRouter for structured extraction.", rawText.slice(0, 2000))) return;
-        const parsed = await parseCvWithOpenRouter(rawText, settings);
-        profile = { ...profile, ...parsed, id: "default", rawText, sourceType, parsedAt: new Date().toISOString() };
+        const signal = beginAiRequest("Extracting experience profile with AI…");
+        try {
+          const parsed = await parseCvWithOpenRouter(rawText, settings, signal);
+          profile = { ...profile, ...parsed, id: "default", rawText, sourceType, parsedAt: new Date().toISOString() };
+        } catch (error) {
+          handleAiError(error);
+          return;
+        } finally {
+          finishAiRequest();
+        }
       }
       await db.experienceProfile.put(profile);
       await refresh();
@@ -504,22 +549,27 @@ export function App() {
   async function handleSmartMatch(field: DetectedField, candidates: SavedAnswer[]) {
     try {
       if (!confirmData("Only the question and five local answer previews will be sent to OpenRouter.", JSON.stringify({ question: field.label, candidates: candidates.map((item) => ({ id: item.id, title: item.title, preview: item.answer.slice(0, 280) })) }, null, 2))) return;
-      const result = await smartMatchAnswer(field.label, candidates, settings);
-      const answer = candidates.find((candidate) => candidate.id === result.bestMatchId);
-      setSuggestions((current) => ({
-        ...current,
-        [field.fieldId]: {
-          questionFieldId: field.fieldId,
-          source: answer && result.shouldUseSavedAnswer ? "answer_bank" : "manual",
-          answer: answer?.answer,
-          savedAnswerId: answer?.id,
-          confidence: result.confidence,
-          reason: result.reason,
-          requiresEditBeforeInsert: result.confidence < 0.7
-        }
-      }));
+      const signal = beginAiRequest("Matching saved answers with AI…");
+      try {
+        const result = await smartMatchAnswer(field.label, candidates, settings, signal);
+        const answer = candidates.find((candidate) => candidate.id === result.bestMatchId);
+        setSuggestions((current) => ({
+          ...current,
+          [field.fieldId]: {
+            questionFieldId: field.fieldId,
+            source: answer && result.shouldUseSavedAnswer ? "answer_bank" : "manual",
+            answer: answer?.answer,
+            savedAnswerId: answer?.id,
+            confidence: result.confidence,
+            reason: result.reason,
+            requiresEditBeforeInsert: result.confidence < 0.7
+          }
+        }));
+      } finally {
+        finishAiRequest();
+      }
     } catch (error) {
-      setNotice({ tone: "danger", text: getErrorMessage(error) });
+      handleAiError(error);
     }
   }
 
@@ -530,6 +580,7 @@ export function App() {
       interactive: boolean;
       existingSuggestions?: Record<string, AnswerSuggestion>;
       fieldsToAnswer?: DetectedField[];
+      signal?: AbortSignal;
     }
   ): Promise<string | undefined> {
     const applicationFields = options.fieldsToAnswer ?? applicationFieldsNeedingAi(
@@ -607,22 +658,19 @@ export function App() {
       return undefined;
     }
 
-    setAiGenerating(true);
-    setAiGeneratingLabel(
-      `Drafting answers for ${questions.length} question${questions.length === 1 ? "" : "s"}…`
-    );
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-    try {
-      const results = await suggestAllAnswersFromExperience(
-        questions,
-        experience ?? EMPTY_EXPERIENCE_PROFILE,
-        scanResult.jobInfo,
-        currentSettings,
-        usingDatabase ? experienceDatabase!.markdown : undefined
-      );
+    const results = await suggestAllAnswersFromExperience(
+      questions,
+      experience ?? EMPTY_EXPERIENCE_PROFILE,
+      scanResult.jobInfo,
+      currentSettings,
+      usingDatabase ? experienceDatabase!.markdown : undefined,
+      options.signal
+    );
 
     const nextSuggestions: Record<string, AnswerSuggestion> = {};
+    const saveTasks: Promise<unknown>[] = [];
     for (const result of results) {
       const isNoFit = result.answer === "NO_FIT";
       nextSuggestions[result.fieldId] = {
@@ -638,12 +686,15 @@ export function App() {
       if (!isNoFit && result.answer?.trim()) {
         const field = applicationFields.find((item) => item.fieldId === result.fieldId);
         if (field) {
-          await saveFieldAnswer(field, result.answer, scanResult.jobInfo.company, {
-            source: "generated_from_cv"
-          });
+          saveTasks.push(
+            saveFieldAnswer(field, result.answer, scanResult.jobInfo.company, {
+              source: "generated_from_cv"
+            })
+          );
         }
       }
     }
+    if (saveTasks.length) await Promise.all(saveTasks);
 
     await refresh();
     const mergedSuggestions = { ...(options.existingSuggestions ?? {}), ...nextSuggestions };
@@ -654,11 +705,21 @@ export function App() {
       noticeText += ` (Job fit is ${fitScore.overallScore}% — below your ${currentSettings.jobFitThreshold}% threshold, but answers were still generated.)`;
     }
     if (currentSettings.autoInsertFields) {
-      const insertResult = await runAutoInsert(applicationFields, mergedSuggestions);
+      const fieldsWithSuggestions = scanResult.fields.filter(
+        (field) =>
+          mergedSuggestions[field.fieldId]?.answer &&
+          mergedSuggestions[field.fieldId]?.answer !== "NO_FIT"
+      );
+      const insertTargets = [
+        ...new Map(
+          [...applicationFields, ...fieldsWithSuggestions].map((field) => [field.fieldId, field])
+        ).values()
+      ];
+      const insertResult = await runAutoInsert(insertTargets, mergedSuggestions);
       const insertSummary = insertResult ? autoInsertSummary(insertResult) : undefined;
       if (insertSummary) noticeText += ` ${insertSummary}.`;
 
-      const stillEmpty = await findUnfilledSuggestedFields(applicationFields, mergedSuggestions);
+      const stillEmpty = await findUnfilledSuggestedFields(insertTargets, mergedSuggestions);
       if (stillEmpty.length) {
         await new Promise((resolve) => window.setTimeout(resolve, 400));
         const retryResult = await autoInsertFields(stillEmpty, {
@@ -680,26 +741,27 @@ export function App() {
       setNotice({ tone: "success", text: noticeText });
     }
     return noticeText;
-    } finally {
-      setAiGenerating(false);
-      setAiGeneratingLabel(undefined);
-    }
   }
 
   async function handleSuggestAllAnswers() {
     if (!scan || !fit) return;
+    const fieldsNeedingAi = applicationFieldsNeedingAi(scan.fields, suggestions);
+    const signal = beginAiRequest(
+      `Drafting answers for ${fieldsNeedingAi.length} question${fieldsNeedingAi.length === 1 ? "" : "s"}…`
+    );
     setLoading(true);
     try {
-      const fieldsNeedingAi = applicationFieldsNeedingAi(scan.fields, suggestions);
       await generateApplicationAnswers(scan, fit, {
         interactive: true,
         existingSuggestions: suggestions,
-        fieldsToAnswer: fieldsNeedingAi
+        fieldsToAnswer: fieldsNeedingAi,
+        signal
       });
     } catch (error) {
-      setNotice({ tone: "danger", text: getErrorMessage(error) });
+      handleAiError(error);
     } finally {
       setLoading(false);
+      finishAiRequest();
     }
   }
 
@@ -756,15 +818,17 @@ export function App() {
       return;
     }
     setLoading(true);
+    const signal = beginAiRequest(`Summarizing ${cv.fileName}…`);
     try {
-      const summary = await summarizeCvWithOpenRouter(cv.fileName, cv.rawText, settings);
+      const summary = await summarizeCvWithOpenRouter(cv.fileName, cv.rawText, settings, signal);
       await db.cvSources.put({ ...cv, ...summary });
       await refresh();
       setNotice({ tone: "success", text: `Regenerated summary for ${cv.fileName}.` });
     } catch (error) {
-      setNotice({ tone: "danger", text: getErrorMessage(error) });
+      handleAiError(error);
     } finally {
       setLoading(false);
+      finishAiRequest();
     }
   }
 
@@ -786,14 +850,16 @@ export function App() {
       return;
     }
     setLoading(true);
+    const signal = beginAiRequest("Recommending CV with AI…");
     try {
-      const recommendation = await recommendCvWithOpenRouter(scan.jobInfo, cvSources, settings);
+      const recommendation = await recommendCvWithOpenRouter(scan.jobInfo, cvSources, settings, signal);
       setCvRecommendation(recommendation);
       setNotice({ tone: "success", text: `Recommended CV: ${recommendation.recommendedFileName}` });
     } catch (error) {
-      setNotice({ tone: "danger", text: getErrorMessage(error) });
+      handleAiError(error);
     } finally {
       setLoading(false);
+      finishAiRequest();
     }
   }
 
@@ -815,10 +881,12 @@ export function App() {
       return;
     }
     setLoading(true);
+    const signal = beginAiRequest("Rebuilding experience database with AI…");
     try {
       const markdown = await buildOptimizedExperienceDatabase(
         cvSources.map((source) => ({ fileName: source.fileName, text: source.rawText })),
-        settings
+        settings,
+        signal
       );
       await db.experienceDatabase.put({
         id: "default",
@@ -830,9 +898,10 @@ export function App() {
       await refresh();
       setNotice({ tone: "success", text: "Optimized CV database rebuilt. Review the markdown before generating answers." });
     } catch (error) {
-      setNotice({ tone: "danger", text: getErrorMessage(error) });
+      handleAiError(error);
     } finally {
       setLoading(false);
+      finishAiRequest();
     }
   }
 
@@ -873,11 +942,16 @@ export function App() {
     if (!scan?.jobInfo.description) return;
     try {
       if (!confirmData("Only the visible job description will be sent to OpenRouter.", scan.jobInfo.description.slice(0, 2500))) return;
-      const improved = await improveJobExtraction(scan.jobInfo.description, settings);
-      setScan({ ...scan, jobInfo: { ...scan.jobInfo, ...improved } });
-      setNotice({ tone: "success", text: "Job extraction improved. Review the extracted requirements before relying on the fit score." });
+      const signal = beginAiRequest("Improving job extraction with AI…");
+      try {
+        const improved = await improveJobExtraction(scan.jobInfo.description, settings, signal);
+        setScan({ ...scan, jobInfo: { ...scan.jobInfo, ...improved } });
+        setNotice({ tone: "success", text: "Job extraction improved. Review the extracted requirements before relying on the fit score." });
+      } finally {
+        finishAiRequest();
+      }
     } catch (error) {
-      setNotice({ tone: "danger", text: getErrorMessage(error) });
+      handleAiError(error);
     }
   }
 
@@ -903,13 +977,17 @@ export function App() {
         frameId: field.frameId
       });
       if (!result.value?.trim()) throw new Error("The field is empty. Enter an answer in the page first.");
+      const question = sanitizeSavedQuestion(field.label);
+      if (shouldRemoveSavedAnswer(question, result.value)) {
+        throw new Error("This field should not be saved to the Answer Bank (profile or factual field).");
+      }
       const timestamp = new Date().toISOString();
       await db.savedAnswers.put({
         id: crypto.randomUUID(),
-        title: field.label.slice(0, 80),
+        title: question.slice(0, 80),
         category: answerCategory(field.category),
-        originalQuestion: field.label,
-        normalizedQuestion: normalizeText(field.label),
+        originalQuestion: question,
+        normalizedQuestion: normalizeText(question),
         answer: result.value,
         tags: [],
         roleTypes: [],
@@ -930,13 +1008,15 @@ export function App() {
     if (!suggestion.answer || suggestion.answer === "NO_FIT") return;
     const edited = window.prompt("Review the answer before saving it", suggestion.answer);
     if (!edited?.trim()) return;
+    const question = sanitizeSavedQuestion(field.label);
+    if (shouldRemoveSavedAnswer(question, edited)) return;
     const timestamp = new Date().toISOString();
     await db.savedAnswers.put({
       id: crypto.randomUUID(),
-      title: field.label.slice(0, 80),
+      title: question.slice(0, 80),
       category: answerCategory(field.category),
-      originalQuestion: field.label,
-      normalizedQuestion: normalizeText(field.label),
+      originalQuestion: question,
+      normalizedQuestion: normalizeText(question),
       answer: edited,
       tags: [],
       roleTypes: [],
@@ -1010,10 +1090,20 @@ export function App() {
       const values = Array.isArray(data) ? data : data.savedAnswers;
       if (!Array.isArray(values)) throw new Error("The file does not contain an answer bank.");
       await db.savedAnswers.bulkPut(values as SavedAnswer[]);
+      const cleanup = await cleanupStoredAnswerBank(
+        () => db.savedAnswers.toArray(),
+        async (cleaned) => {
+          await db.savedAnswers.clear();
+          if (cleaned.length) await db.savedAnswers.bulkPut(cleaned);
+        }
+      );
       await refresh();
       setNotice({
         tone: "success",
-        text: `Imported ${values.length} answer${values.length === 1 ? "" : "s"} into your Answer Bank.`
+        text:
+          cleanup.removed.length || cleanup.fixed.length
+            ? cleanup.summary
+            : `Imported ${values.length} answer${values.length === 1 ? "" : "s"} into your Answer Bank.`
       });
     } catch (error) {
       setNotice({ tone: "danger", text: getErrorMessage(error) });
@@ -1024,6 +1114,18 @@ export function App() {
     await db.savedAnswers.clear();
     await refresh();
     setNotice({ tone: "success", text: "Answer Bank cleared. Scan a form to regenerate answers with AI." });
+  }
+
+  async function cleanupAnswers() {
+    const result = await cleanupStoredAnswerBank(
+      () => db.savedAnswers.toArray(),
+      async (cleaned) => {
+        await db.savedAnswers.clear();
+        if (cleaned.length) await db.savedAnswers.bulkPut(cleaned);
+      }
+    );
+    await refresh();
+    setNotice({ tone: result.removed.length || result.fixed.length ? "success" : "info", text: result.summary });
   }
 
   function exportAnswerBank() {
@@ -1270,6 +1372,7 @@ export function App() {
           }
         }}
         onClearAll={clearAllAnswers}
+        onCleanup={cleanupAnswers}
         onExport={exportAnswerBank}
         onImport={importAnswers}
       />
@@ -1325,6 +1428,7 @@ export function App() {
           <LoadingPanel
             label={aiGeneratingLabel ?? "AI is thinking…"}
             detail="OpenRouter is drafting answers from your experience. This usually takes 10–30 seconds."
+            onCancel={cancelAiRequest}
           />
         ) : null}
         {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}

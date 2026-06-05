@@ -1,5 +1,7 @@
 import React from "react";
 import { Copy, Download, Plus, Search, Trash2, Upload } from "lucide-react";
+import { cleanupAnswerBank } from "../../shared/answerBankCleanup";
+import { sanitizeSavedQuestion } from "../../shared/answerBankQuestions";
 import type { AnswerCategory, SavedAnswer } from "../../shared/types";
 import { normalizeText } from "../../matching/normalize";
 import { Badge, Button, Card, EmptyState, Field, Notice } from "../components/UI";
@@ -9,6 +11,7 @@ interface Props {
   onSave: (answer: SavedAnswer) => void;
   onDelete: (id: string) => void;
   onClearAll: () => void;
+  onCleanup: () => void;
   onExport: () => void;
   onImport: (file: File) => void;
 }
@@ -28,7 +31,7 @@ const CATEGORIES: AnswerCategory[] = [
   "custom"
 ];
 
-export function AnswerBankTab({ answers, onSave, onDelete, onClearAll, onExport, onImport }: Props) {
+export function AnswerBankTab({ answers, onSave, onDelete, onClearAll, onCleanup, onExport, onImport }: Props) {
   const [query, setQuery] = React.useState("");
   const [category, setCategory] = React.useState("");
   const [editing, setEditing] = React.useState<SavedAnswer | null>(null);
@@ -49,6 +52,25 @@ export function AnswerBankTab({ answers, onSave, onDelete, onClearAll, onExport,
       : showingCount === totalCount
         ? `${totalCount} answer${totalCount === 1 ? "" : "s"}`
         : `${showingCount} of ${totalCount} answers`;
+
+  function handleCleanup(): void {
+    if (!totalCount) return;
+    const preview = cleanupAnswerBank(answers);
+    if (!preview.removed.length && !preview.fixed.length) {
+      window.alert("Nothing to clean up — no broken or duplicate entries found.");
+      return;
+    }
+    const detail = [
+      preview.removed.length ? `${preview.removed.length} broken/duplicate entries will be removed` : "",
+      preview.fixed.length ? `${preview.fixed.length} question labels will be corrected` : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const confirmed = window.confirm(
+      `Clean up your Answer Bank?\n\n${detail}\n\n${preview.kept.length} answer${preview.kept.length === 1 ? "" : "s"} will remain.`
+    );
+    if (confirmed) onCleanup();
+  }
 
   function handleClearAll(): void {
     if (!totalCount) return;
@@ -104,13 +126,16 @@ export function AnswerBankTab({ answers, onSave, onDelete, onClearAll, onExport,
               }}
             />
           </label>
+          <Button onClick={handleCleanup} disabled={!totalCount}>
+            Clean up
+          </Button>
           <Button variant="danger" disabled={!totalCount} onClick={handleClearAll}>
             <Trash2 size={16} /> Delete all
           </Button>
         </div>
         <Notice tone="info">
-          Export saves a JSON backup you can re-import later. Delete all clears bad auto-saved entries — scan a form
-          again to regenerate with AI.
+          Use <strong>Clean up</strong> to remove broken auto-saves (profile fields, wrong matches, duplicates) and
+          fix polluted question labels. Export saves a JSON backup you can re-import later.
         </Notice>
       </Card>
 
@@ -233,7 +258,9 @@ function AnswerEditor({
           onClick={() =>
             onSave({
               ...draft,
-              normalizedQuestion: normalizeText(draft.originalQuestion),
+              title: sanitizeSavedQuestion(draft.title || draft.originalQuestion).slice(0, 80),
+              originalQuestion: sanitizeSavedQuestion(draft.originalQuestion),
+              normalizedQuestion: normalizeText(sanitizeSavedQuestion(draft.originalQuestion)),
               updatedAt: new Date().toISOString()
             })
           }
