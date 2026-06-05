@@ -11,7 +11,7 @@ Rules:
 2. Deduplicate overlapping bullets. Keep the strongest, most specific wording.
 3. Preserve disagreements between CVs in a "CV Variant Index" section (e.g. different job titles for the same role).
 4. Organize for job-application answer generation: positioning angles, merged timeline, skills matrix, deals/metrics, projects, education, job-matching guide.
-5. Add a section explaining which angle to use for security, TAM, FDE/AI, backend, BD/growth, and payments roles.
+5. Add a section explaining which angle to use for each role type. **Default angle: Forward Deployed / applied AI / customer-facing technical delivery** (customer embedding, scoping, LLM workflows, evals, observability). Use security, TAM, backend-only, or BD/growth angles only when the job clearly targets those domains. Do not treat blockchain or Web3 security as the default narrative.
 6. Use markdown headings. No emojis. Straight quotes only.
 7. Return JSON only: {"markdown":"..."}`;
 

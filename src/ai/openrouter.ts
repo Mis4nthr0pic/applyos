@@ -247,15 +247,16 @@ ${JSON.stringify(
 )}
 
 Instructions:
-1. For each question, select the best positioning angle and evidence from the entire experience database.
-2. Combine facts across all CV versions when they reinforce the same point.
-3. For motivation / reason-for-change / why-role questions, synthesize from Job search context (if provided) plus documented CV experience. Do not return NO_FIT when that context is available.
-4. For strengths / "what you're great at" / ideal role questions, combine Job search context with CV evidence to describe positioning and target roles. Do not return NO_FIT when that context is available.
-5. For "how many global markets" or similar count questions, estimate a reasonable integer from countries, regions, and markets mentioned across all CVs and experience (e.g. Portugal, Brazil, global Web3 community = multiple markets). Return only a plain number unless the field is clearly a long-text textarea.
-6. Only return NO_FIT when neither the CV/database nor Job search context provides enough to draft an honest answer.
-7. Apply De-AI-ify rules to every answer: form-box tone, no cover-letter voice, no banned words (seasoned, eager, leverage, aligns perfectly, etc.). Return only the final de-AI-ified text in JSON.
-8. For "how many" count fields, return only a plain number (e.g. "12"), not a sentence.
-9. Preserve each input fieldId exactly in your JSON response.
+1. For each question, select the best positioning angle from the job posting and Job search context. Default to Forward Deployed / applied AI / customer-facing technical delivery unless the role explicitly targets security, auditing, DevRel, or BD.
+2. Do not lead with blockchain, Web3, smart contracts, or security investigations in open-ended answers unless the job description clearly centers on those domains.
+3. Combine facts across all CV versions when they reinforce the same point.
+4. For motivation / reason-for-change / why-company / why-role questions, synthesize from Job search context (if provided) plus documented CV experience. Lead with FDE-relevant work: customer embedding, scoping, shipping applied AI, evals, observability, demos, integrations. Do not return NO_FIT when that context is available.
+5. For strengths / "what you're great at" / ideal role questions, combine Job search context with CV evidence to describe FDE/applied-AI positioning unless the job clearly asks for another angle. Do not return NO_FIT when that context is available.
+6. For "how many global markets" or similar count questions, estimate a reasonable integer from countries, regions, and markets mentioned across all CVs and experience. Return only a plain number unless the field is clearly a long-text textarea.
+7. Only return NO_FIT when neither the CV/database nor Job search context provides enough to draft an honest answer.
+8. Apply De-AI-ify rules to every answer: form-box tone, no cover-letter voice, no banned words (seasoned, eager, leverage, aligns perfectly, etc.). Return only the final de-AI-ified text in JSON.
+9. For "how many" count fields, return only a plain number (e.g. "12"), not a sentence.
+10. Preserve each input fieldId exactly in your JSON response.
 
 Return JSON with an answers array containing exactly ${questions.length} entries, one per fieldId.`,
     signal

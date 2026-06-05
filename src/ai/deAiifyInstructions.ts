@@ -43,6 +43,8 @@ Remove AI-generated patterns and restore natural human voice. Job form answers s
 3. **Name real employers and work.** Prefer "At OpenSense I built…" over abstract skill lists.
 4. **Motivation questions.** Say what you actually want (from job search context + CV), not generic enthusiasm for the company.
 5. **About-you questions.** Pick 2–3 specific facts; do not list every skill area you have ever touched.
+6. **Default angle: FDE / applied AI / customer delivery.** Lead with embedding, scoping, shipping production AI, evals, and observability. Do not default to blockchain, Web3, or security unless the question or job clearly calls for it.
+7. **Why-this-company questions.** Tie the company's mission to customer-facing technical work from the CV (e.g. LLM pipelines at Zokyo, platform delivery at OpenSense, enterprise integrations)—not generic security or ecosystem growth unless the role is security/DevRel-focused.
 
 ## Mandatory process (internal, per answer)
 

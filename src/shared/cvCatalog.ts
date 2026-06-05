@@ -54,13 +54,37 @@ export const CV_CATALOG: CvCatalogEntry[] = [
   },
   {
     fileName: "cv-fde.pdf",
-    positioningLabel: "Forward deployed / applied AI",
+    positioningLabel: "Forward Deployed Engineer | Applied AI & LLM Systems",
     summary:
-      "Applied AI CV emphasizing embedded delivery, LLM workflows, evals, and production AI systems.",
-    targetRoles: ["Forward deployed engineer", "Applied AI engineer", "ML engineer"],
-    keyStrengths: ["LLM pipelines", "Evals and HITL", "Client embedding", "Production AI"],
-    whenToUse: "FDE, applied AI, or LLM product roles.",
-    keywords: ["forward deployed", "fde", "applied ai", "llm", "machine learning", "agent", "eval"]
+      "FDE CV: embeds with customer teams, scopes problems, ships applied AI in production. Zokyo LLM pipelines and client embedding; OpenSense developer platform; Avem enterprise customer implementation; 15 years backend/platform with observability and enterprise integrations.",
+    targetRoles: [
+      "Forward deployed engineer",
+      "Applied AI engineer",
+      "Solutions engineer",
+      "Customer engineer",
+      "ML engineer"
+    ],
+    keyStrengths: [
+      "Customer embedding and scoping",
+      "LLM pipelines and evals",
+      "Production observability",
+      "Technical demos and integrations",
+      "Applied AI shipping"
+    ],
+    whenToUse:
+      "Default CV for FDE, solutions engineering, applied AI, customer-facing technical, and LLM product roles. Use unless the job is explicitly security-only or DevRel/BD-only.",
+    keywords: [
+      "forward deployed",
+      "fde",
+      "applied ai",
+      "llm",
+      "solutions engineer",
+      "customer engineer",
+      "observability",
+      "eval",
+      "embedding",
+      "integrations"
+    ]
   }
 ];
 
