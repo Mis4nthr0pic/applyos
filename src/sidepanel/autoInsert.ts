@@ -4,9 +4,8 @@ import { isApplicationQuestionField } from "../shared/applicationFields";
 import { isProfileLinkField, labelRequestsProfileLink } from "../shared/profileLinkFields";
 import { SCREENING_QUESTION_CATEGORIES, DOCUMENT_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "../shared/constants";
 import { withEffectiveCategory } from "../shared/screeningFields";
-import { isReactControlledFormHost } from "../shared/reactFormHosts";
 import type { AnswerSuggestion, DetectedField, SavedAnswer, UserProfile } from "../shared/types";
-import { insertIntoField, profileValueForField, sendToActiveTab } from "./lib";
+import { insertFieldsBatch, insertIntoField, profileValueForField, sendToActiveTab } from "./lib";
 
 export interface AutoInsertResult {
   inserted: number;
@@ -15,6 +14,25 @@ export interface AutoInsertResult {
 }
 
 const SKIP_CATEGORIES = new Set<string>([...DOCUMENT_CATEGORIES, "manual_review"]);
+
+const FAST_WIDGETS = new Set(["default", "location_text"]);
+
+function needsForceReinsert(platform?: string): boolean {
+  return platform === "ashby" || platform === "gem";
+}
+
+function isSlowInsertField(field: DetectedField): boolean {
+  if (field.widget && !FAST_WIDGETS.has(field.widget)) return true;
+  if (field.fieldType === "radio" || field.fieldType === "select") return true;
+  if (field.category === "country" || field.category === "state") return true;
+  return false;
+}
+
+function isFastProfileField(field: DetectedField): boolean {
+  if (field.isDisabled || !field.isVisible || field.fieldType === "file") return false;
+  if (isSlowInsertField(field)) return false;
+  return Boolean(field.category && SAFE_PROFILE_CATEGORIES.includes(field.category));
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -100,6 +118,8 @@ function valueMatchesFieldOptions(field: DetectedField, value: string): boolean 
 }
 
 async function fieldIsEmpty(field: DetectedField): Promise<boolean> {
+  if (isFastProfileField(field) && !field.value?.trim()) return true;
+
   const result = await sendToActiveTab<{ ok: boolean; value?: string }>({
     type: "GET_FIELD_VALUE",
     fieldId: field.fieldId,
@@ -108,8 +128,7 @@ async function fieldIsEmpty(field: DetectedField): Promise<boolean> {
   });
   const value = result.value?.trim() ?? "";
   if (!value) return true;
-  // DOM may show a value while React form state is still empty (Ashby, etc.) — re-commit on autofill.
-  if (isReactControlledFormHost(field.platform)) return true;
+  if (needsForceReinsert(field.platform)) return true;
   return false;
 }
 
@@ -191,13 +210,16 @@ export async function autoInsertFields(
   const minConfidence = options.answerBankMinConfidence ?? 0.82;
   const result: AutoInsertResult = { inserted: 0, skipped: 0, failures: [] };
 
+  const fastBatch: Array<{ field: DetectedField; value: string; savedAnswerId?: string }> = [];
+  const slowFields: Array<{ field: DetectedField; value: string; savedAnswerId?: string }> = [];
+
   for (const field of sortFieldsForInsert(fields)) {
     if (!shouldAutoInsertField(field)) {
       result.skipped += 1;
       continue;
     }
 
-    if (options.skipIfFilled !== false) {
+    if (options.skipIfFilled !== false && !isFastProfileField(field)) {
       try {
         if (!(await fieldIsEmpty(field))) {
           result.skipped += 1;
@@ -225,15 +247,74 @@ export async function autoInsertFields(
       continue;
     }
 
+    if (options.skipIfFilled !== false && isFastProfileField(field) && field.value?.trim()) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const entry = { field, value: resolved.value, savedAnswerId: resolved.savedAnswerId };
+    if (isFastProfileField(field)) {
+      fastBatch.push(entry);
+    } else {
+      slowFields.push(entry);
+    }
+  }
+
+  if (fastBatch.length) {
     try {
-      const insertResult = await insertIntoField(field, resolved.value);
+      const batchResults = await insertFieldsBatch(
+        fastBatch.map(({ field, value }) => ({ field, value }))
+      );
+      const resultById = new Map(batchResults.map((item) => [item.fieldId, item]));
+      for (const entry of fastBatch) {
+        const batchResult = resultById.get(entry.field.fieldId);
+        if (batchResult?.ok) {
+          result.inserted += 1;
+          if (entry.savedAnswerId && options.onSavedAnswerUsed) {
+            await options.onSavedAnswerUsed(entry.savedAnswerId);
+          }
+        } else if (batchResult) {
+          result.failures.push({
+            label: entry.field.label,
+            error: batchResult.error || "Insertion failed."
+          });
+        } else {
+          result.failures.push({ label: entry.field.label, error: "Insertion failed." });
+        }
+      }
+    } catch (error) {
+      for (const entry of fastBatch) {
+        result.failures.push({
+          label: entry.field.label,
+          error: error instanceof Error ? error.message : "Batch insertion failed."
+        });
+      }
+    }
+  }
+
+  for (const entry of slowFields) {
+    const { field, value, savedAnswerId } = entry;
+    if (options.skipIfFilled !== false) {
+      try {
+        if (!(await fieldIsEmpty(field))) {
+          result.skipped += 1;
+          continue;
+        }
+      } catch {
+        result.skipped += 1;
+        continue;
+      }
+    }
+
+    try {
+      const insertResult = await insertIntoField(field, value);
       if (!insertResult.ok) {
         result.failures.push({ label: field.label, error: insertResult.error || "Insertion failed." });
         continue;
       }
       result.inserted += 1;
-      if (resolved.savedAnswerId && options.onSavedAnswerUsed) {
-        await options.onSavedAnswerUsed(resolved.savedAnswerId);
+      if (savedAnswerId && options.onSavedAnswerUsed) {
+        await options.onSavedAnswerUsed(savedAnswerId);
       }
       if (field.category === "country" || field.category === "state") {
         await delay(350);
@@ -245,8 +326,6 @@ export async function autoInsertFields(
         await delay(500);
       } else if (field.fieldType === "radio" && field.options?.some((option) => /^yes$/i.test(option))) {
         await delay(250);
-      } else if (isReactControlledFormHost(field.platform)) {
-        await delay(150);
       }
     } catch (error) {
       result.failures.push({

@@ -88,7 +88,10 @@ export function setControlledInputValue(
   if (!trimmed) return;
 
   if (isReactControlledFormHost()) {
-    typeCharacterByCharacter(element, value);
+    element.focus();
+    const previous = element.value;
+    commitWithTracker(element as TrackedInput, value, previous, "insertFromPaste");
+    element.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
     return;
   }
 

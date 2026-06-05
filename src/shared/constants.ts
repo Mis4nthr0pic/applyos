@@ -26,6 +26,7 @@ export const SAFE_PROFILE_CATEGORIES: FieldCategory[] = [
   "country",
   "state",
   "city",
+  "current_company",
   "linkedin",
   "github",
   "portfolio",

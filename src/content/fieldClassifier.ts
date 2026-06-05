@@ -19,6 +19,7 @@ const RULES: Array<[FieldCategory, RegExp]> = [
   ["country", /\b(country|nation|where do you currently live|country of residence|nationality)\b/],
   ["state", /\b(state|province|region)\b/],
   ["city", /\b(city|town|current location|your location|where are you located|where are you based|^location$)\b/],
+  ["current_company", /\b(current company|present employer|current employer|employer name)\b/],
   ["resume", /\b(resume|cv|curriculum vitae)\b/],
   ["cover_letter", /\b(cover letter)\b/],
   ["additional_file", /\b(additional file|attachment|supporting document)\b/],

@@ -115,6 +115,7 @@ export function profileValueForFieldWithWidget(
     country: "country",
     state: "state",
     city: "city",
+    current_company: "currentCompany",
     linkedin: "linkedinUrl",
     github: "githubUrl",
     portfolio: "portfolioUrl",
@@ -129,6 +130,7 @@ export function profileValueForFieldWithWidget(
   const key = field.category ? map[field.category] : undefined;
   if (key === "phone") return formatPhoneForProfile(profile.phone, profile.country);
   if (key === "fullName") return resolveFullName(profile);
+  if (key === "city") return pickProfileString(profile.city, profile.location, formatCompositeLocation(profile));
   const value = key ? profile[key] : undefined;
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

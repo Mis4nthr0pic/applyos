@@ -66,6 +66,7 @@ export type FieldCategory =
   | "country"
   | "state"
   | "city"
+  | "current_company"
   | "linkedin"
   | "github"
   | "social_profile"
@@ -190,6 +191,8 @@ export interface UserProfile {
   city?: string;
   /** Full location line for free-text fields (e.g. "Florianópolis, Brazil" or "Remote"). */
   location?: string;
+  /** Current / most recent employer for "Current company" application fields. */
+  currentCompany?: string;
   linkedinUrl?: string;
   githubUrl?: string;
   portfolioUrl?: string;
@@ -405,6 +408,19 @@ export type ContentMessage =
   | { type: "SCAN_PAGE"; watchDynamicFields: boolean }
   | { type: "EXTRACT_JOB_INFO" }
   | { type: "SET_DYNAMIC_WATCH"; enabled: boolean }
+  | {
+      type: "INSERT_FIELDS_BATCH";
+      fields: Array<{
+        fieldId: string;
+        selectorHint: string;
+        value: string;
+        frameId?: number;
+        widget?: FieldWidget;
+        fieldType?: string;
+        category?: string;
+      }>;
+      frameId?: number;
+    }
   | {
       type: "INSERT_FIELD";
       fieldId: string;

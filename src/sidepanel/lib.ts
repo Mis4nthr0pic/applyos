@@ -45,6 +45,43 @@ export async function insertIntoField(field: DetectedField, value: string): Prom
   });
 }
 
+export async function insertFieldsBatch(
+  items: Array<{ field: DetectedField; value: string }>
+): Promise<Array<{ fieldId: string; ok: boolean; error?: string }>> {
+  if (!items.length) return [];
+
+  const byFrame = new Map<number | undefined, Array<{ field: DetectedField; value: string }>>();
+  for (const item of items) {
+    const frameId = item.field.frameId;
+    const group = byFrame.get(frameId) ?? [];
+    group.push(item);
+    byFrame.set(frameId, group);
+  }
+
+  const allResults: Array<{ fieldId: string; ok: boolean; error?: string }> = [];
+  for (const [frameId, group] of byFrame) {
+    const response = await sendToActiveTab<{
+      ok: boolean;
+      results?: Array<{ fieldId: string; ok: boolean; error?: string }>;
+      error?: string;
+    }>({
+      type: "INSERT_FIELDS_BATCH",
+      frameId,
+      fields: group.map(({ field, value }) => ({
+        fieldId: field.fieldId,
+        selectorHint: field.selectorHint,
+        value,
+        frameId: field.frameId,
+        widget: field.widget,
+        category: field.category,
+        fieldType: field.fieldType
+      }))
+    });
+    allResults.push(...(response.results ?? []));
+  }
+  return allResults;
+}
+
 export function downloadJson(filename: string, data: unknown): void {
   downloadText(filename, JSON.stringify(data, null, 2), "application/json");
 }

@@ -7,6 +7,7 @@ import {
   findField,
   insertFieldValue,
   insertFieldValueAsync,
+  insertFieldsBatchAsync,
   readFieldValue
 } from "./fieldDetection";
 import { startFieldAutoCapture } from "./fieldAutoCapture";
@@ -49,6 +50,12 @@ if (!window.__applyosContentLoaded) {
         else stopObserver();
         sendResponse({ ok: true });
         return false;
+      }
+      if (message.type === "INSERT_FIELDS_BATCH") {
+        insertFieldsBatchAsync(message.fields)
+          .then((results) => sendResponse({ ok: true, results }))
+          .catch((error) => sendResponse({ ok: false, error: getErrorMessage(error) }));
+        return true;
       }
       if (message.type === "INSERT_FIELD") {
         insertFieldValueAsync(

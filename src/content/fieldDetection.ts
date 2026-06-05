@@ -36,7 +36,7 @@ import {
   extractLinkedInEasyApplyFields,
   findLinkedInEasyApplyRoot
 } from "./linkedinForm";
-import { setControlledInputValue } from "./controlledInput";
+import { setControlledInputValue, readCommittedInputValue } from "./controlledInput";
 import { setControlledInputValueInPageWorld } from "./pageWorldInput";
 import { isReactControlledFormHost } from "../shared/reactFormHosts";
 import { resolveFieldWidget } from "./fieldWidgets";
@@ -558,6 +558,16 @@ export async function insertFieldValueAsync(
       ? element
       : resolveInsertTarget(element);
 
+  if (insertTarget instanceof HTMLInputElement || insertTarget instanceof HTMLTextAreaElement) {
+    const syncResult = insertFieldValueSync(fieldId, selectorHint, value, widget);
+    if (syncResult.ok) {
+      const committed = readCommittedInputValue(insertTarget);
+      if (committed.trim() === value.trim() || committed.length > 0) {
+        return syncResult;
+      }
+    }
+  }
+
   if (
     (insertTarget instanceof HTMLInputElement || insertTarget instanceof HTMLTextAreaElement) &&
     isReactControlledFormHost(undefined, window.location.hostname)
@@ -571,6 +581,45 @@ export async function insertFieldValueAsync(
   }
 
   return insertFieldValueSync(fieldId, selectorHint, value, widget);
+}
+
+function needsDelayAfterInsert(item: {
+  widget?: FieldWidget;
+  category?: string;
+  fieldType?: string;
+}): boolean {
+  if (item.category === "country" || item.category === "state") return true;
+  if (item.widget === "location_autocomplete" || item.widget === "country_dropdown" || item.widget === "combobox") {
+    return true;
+  }
+  if (item.fieldType === "radio" || item.fieldType === "select") return true;
+  return false;
+}
+
+export async function insertFieldsBatchAsync(
+  items: Array<{
+    fieldId: string;
+    selectorHint: string;
+    value: string;
+    widget?: FieldWidget;
+    category?: string;
+    fieldType?: string;
+  }>
+): Promise<Array<{ fieldId: string; ok: boolean; error?: string }>> {
+  const results: Array<{ fieldId: string; ok: boolean; error?: string }> = [];
+  for (const item of items) {
+    const result = await insertFieldValueAsync(
+      item.fieldId,
+      item.selectorHint,
+      item.value,
+      item.widget
+    );
+    results.push({ fieldId: item.fieldId, ok: result.ok, error: result.error });
+    if (result.ok && needsDelayAfterInsert(item)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+    }
+  }
+  return results;
 }
 
 function insertFieldValueSync(
