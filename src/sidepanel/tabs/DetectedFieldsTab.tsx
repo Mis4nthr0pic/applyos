@@ -1,7 +1,9 @@
+import { useState } from "react";
 import {
   AlertTriangle,
   Clipboard,
   FileText,
+  Pencil,
   RefreshCw,
   Save,
   ScanSearch,
@@ -184,6 +186,13 @@ export function DetectedFieldsTab(props: Props) {
               );
             }}
           </FieldGroup>
+          {props.fit && application.length && props.fit.overallScore < props.settings.jobFitThreshold ? (
+            <Notice tone="warning">
+              <AlertTriangle size={16} /> Fit is {props.fit.overallScore}%, below your{" "}
+              {props.settings.jobFitThreshold}% threshold. AI answers are still generated for this
+              form, so review them carefully before inserting.
+            </Notice>
+          ) : null}
           <FieldGroup
             title="Application Questions"
             description="Custom questions like visa type, job-change reason, and market experience. AI generates answers on scan when enabled in Settings."
@@ -210,7 +219,6 @@ export function DetectedFieldsTab(props: Props) {
                 answers={props.answers}
                 suggestion={props.suggestions[field.fieldId]}
                 settings={props.settings}
-                fit={props.fit}
                 onInsert={props.onInsert}
                 onSmartMatch={props.onSmartMatch}
                 onSaveCurrentValue={props.onSaveCurrentValue}
@@ -246,7 +254,6 @@ export function DetectedFieldsTab(props: Props) {
                 answers={props.answers}
                 suggestion={props.suggestions[field.fieldId]}
                 settings={props.settings}
-                fit={props.fit}
                 onInsert={props.onInsert}
                 onSmartMatch={props.onSmartMatch}
                 onSaveCurrentValue={props.onSaveCurrentValue}
@@ -506,6 +513,87 @@ function FieldGroup({
   );
 }
 
+/**
+ * Single value action row used everywhere a value can be inserted (profile fields,
+ * AI suggestions, answer matches). Insert is the primary action, Edit opens an inline
+ * editor (no jarring window.prompt), and Copy is a compact icon button. `extra` slots
+ * in context-specific actions like "Save to Answer Bank".
+ */
+function InsertableValue({
+  value,
+  insertLabel = "Insert",
+  onInsert,
+  extra
+}: {
+  value: string;
+  insertLabel?: string;
+  onInsert: (value: string) => void;
+  extra?: React.ReactNode;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (editing) {
+    return (
+      <div className="value-edit">
+        <textarea
+          rows={Math.min(8, Math.max(3, Math.ceil(draft.length / 50)))}
+          value={draft}
+          autoFocus
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <div className="button-row">
+          <Button
+            variant="primary"
+            onClick={() => {
+              onInsert(draft);
+              setEditing(false);
+            }}
+          >
+            Insert edited
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setDraft(value);
+              setEditing(false);
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="button-row">
+      <Button variant="primary" onClick={() => onInsert(value)}>
+        {insertLabel}
+      </Button>
+      <Button
+        variant="secondary"
+        onClick={() => {
+          setDraft(value);
+          setEditing(true);
+        }}
+      >
+        <Pencil size={15} /> Edit
+      </Button>
+      <Button
+        variant="ghost"
+        className="icon-button"
+        title="Copy to clipboard"
+        aria-label="Copy to clipboard"
+        onClick={() => navigator.clipboard.writeText(value)}
+      >
+        <Clipboard size={15} />
+      </Button>
+      {extra}
+    </div>
+  );
+}
+
 function SimpleField({
   field,
   value,
@@ -530,16 +618,7 @@ function SimpleField({
         </div>
       </div>
       <p className={value ? "value-preview" : "subtle"}>{value || "No saved value"}</p>
-      {!manual && value ? (
-        <div className="button-row">
-          <Button onClick={() => navigator.clipboard.writeText(value)}><Clipboard size={15} /> Copy</Button>
-          <Button onClick={() => onInsert(value)}>Insert</Button>
-          <Button onClick={() => {
-            const edited = window.prompt("Edit before inserting", value);
-            if (edited) onInsert(edited);
-          }}>Edit Before Insert</Button>
-        </div>
-      ) : null}
+      {!manual && value ? <InsertableValue value={value} onInsert={onInsert} /> : null}
     </Card>
   );
 }
@@ -549,7 +628,6 @@ function ApplicationQuestion({
   answers,
   suggestion,
   settings,
-  fit,
   onInsert,
   onSmartMatch,
   onSaveCurrentValue,
@@ -560,7 +638,6 @@ function ApplicationQuestion({
   answers: SavedAnswer[];
   suggestion?: AnswerSuggestion;
   settings: Settings;
-  fit?: JobFitScore;
   onInsert: (field: DetectedField, value: string, savedAnswerId?: string) => void;
   onSmartMatch: (field: DetectedField, candidates: SavedAnswer[]) => void;
   onSaveCurrentValue: (field: DetectedField) => void;
@@ -585,17 +662,17 @@ function ApplicationQuestion({
           <strong>{suggestion.source === "no_fit" ? "NO_FIT" : recommendationLabel(suggestion.source)}</strong>
           <p>{suggestion.answer || suggestion.reason}</p>
           {suggestion.answer && suggestion.answer !== "NO_FIT" ? (
-            <div className="button-row">
-              <Button onClick={() => navigator.clipboard.writeText(suggestion.answer!)}><Clipboard size={15} /> Copy</Button>
-              <Button onClick={() => onInsert(field, suggestion.answer!)}>Insert</Button>
-              <Button onClick={() => {
-                const edited = window.prompt("Edit before inserting", suggestion.answer);
-                if (edited) onInsert(field, edited);
-              }}>Edit Before Insert</Button>
-              {suggestion.source === "experience_profile" ? (
-                <Button onClick={() => onSaveSuggestion(field, suggestion)}>Save to Answer Bank</Button>
-              ) : null}
-            </div>
+            <InsertableValue
+              value={suggestion.answer}
+              onInsert={(value) => onInsert(field, value)}
+              extra={
+                suggestion.source === "experience_profile" ? (
+                  <Button variant="ghost" onClick={() => onSaveSuggestion(field, suggestion)}>
+                    Save to Answer Bank
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : null}
         </Notice>
       ) : null}
@@ -608,14 +685,10 @@ function ApplicationQuestion({
                 <Badge tone={confidence >= 0.7 ? "good" : "warn"}>{Math.round(confidence * 100)}% match</Badge>
               </div>
               <p>{answer.answer}</p>
-              <div className="button-row">
-                <Button onClick={() => navigator.clipboard.writeText(answer.answer)}><Clipboard size={15} /> Copy</Button>
-                <Button onClick={() => onInsert(field, answer.answer, answer.id)}>Insert</Button>
-                <Button onClick={() => {
-                  const edited = window.prompt("Edit before inserting", answer.answer);
-                  if (edited) onInsert(field, edited, answer.id);
-                }}>Edit Before Insert</Button>
-              </div>
+              <InsertableValue
+                value={answer.answer}
+                onInsert={(value) => onInsert(field, value, answer.id)}
+              />
             </div>
           ))}
         </div>
@@ -631,13 +704,8 @@ function ApplicationQuestion({
         <Button onClick={() => onSaveCurrentValue(field)}>
           <FileText size={16} /> Save Current Answer
         </Button>
-        <Button onClick={() => onSkip(field)}>Skip</Button>
+        <Button variant="ghost" onClick={() => onSkip(field)}>Skip</Button>
       </div>
-      {fit && fit.overallScore < settings.jobFitThreshold ? (
-        <Notice tone="warning">
-          <AlertTriangle size={16} /> Fit is below your {settings.jobFitThreshold}% threshold. Generated answers are disabled.
-        </Notice>
-      ) : null}
     </Card>
   );
 }

@@ -70,8 +70,11 @@ main { padding: 14px; max-width: 760px; margin: 0 auto; }
 .button-secondary { color: #27364d; background: white; border-color: var(--border); }
 .button-secondary:hover { background: var(--surface-muted); border-color: #b9c4d3; }
 .button-ghost { color: var(--accent); background: transparent; }
+.button-ghost:hover { background: var(--surface-muted); }
 .button-danger { color: var(--bad); background: #fff5f5; border-color: #f5c6cc; }
 .button-danger:hover { background: #fde8eb; }
+.icon-button { padding: 7px 8px; }
+.value-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .spin { animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
