@@ -6,9 +6,11 @@ import {
   extractDetectedFields,
   findField,
   insertFieldValue,
+  insertFieldValueAsync,
   readFieldValue
 } from "./fieldDetection";
 import { startFieldAutoCapture } from "./fieldAutoCapture";
+import { findLinkedInEasyApplyRoot } from "./linkedinForm";
 import { selectAdapter } from "../adapters";
 
 declare global {
@@ -19,6 +21,7 @@ declare global {
 
 let observer: MutationObserver | undefined;
 let observerTimeout: number | undefined;
+let observerDebounce: number | undefined;
 let removeDependencyListeners: (() => void) | undefined;
 let stopFieldAutoCapture: (() => void) | undefined;
 let currentPlatform = "generic";
@@ -48,8 +51,15 @@ if (!window.__applyosContentLoaded) {
         return false;
       }
       if (message.type === "INSERT_FIELD") {
-        sendResponse(insertFieldValue(message.fieldId, message.selectorHint, message.value));
-        return false;
+        insertFieldValueAsync(
+          message.fieldId,
+          message.selectorHint,
+          message.value,
+          message.widget
+        )
+          .then(sendResponse)
+          .catch((error) => sendResponse({ ok: false, error: getErrorMessage(error) }));
+        return true;
       }
       if (message.type === "GET_FIELD_VALUE") {
         const element = findField(message.fieldId, message.selectorHint);
@@ -95,11 +105,15 @@ async function scanPage(watchDynamicFields: boolean): Promise<ScanResult> {
     : hasJobOnPage && fields.length > 0
       ? " Job description was read from this page."
       : "";
+  const linkedInHint =
+    adapter.id === "linkedin" && fields.length === 0
+      ? " Open the Easy Apply modal on this job, then scan again."
+      : "";
   const message =
     pageType === "job_listing_page" && fields.length === 0 && hasApplyButton
       ? `Job listing detected. Use Extract Job Info, click Apply manually, then Scan Page for form fields.${listingNote}`
       : fields.length === 0
-        ? `No application fields were found.${extracted.jobInfoFromListing ? listingNote : " Extract job info first if this is a listing page."}`
+        ? `No application fields were found.${linkedInHint}${extracted.jobInfoFromListing ? listingNote : " Extract job info first if this is a listing page."}`
         : extracted.jobInfoFromListing
           ? `Application form detected.${listingNote}`
           : undefined;
@@ -121,16 +135,25 @@ function startObserver(): void {
   stopObserver();
   removeDependencyListeners = attachDependencyListeners();
   observer = new MutationObserver(() => {
-    const fields = extractDetectedFields(currentPlatform);
-    const signature = fieldSignature(fields);
-    if (signature !== lastFieldSignature) {
-      lastFieldSignature = signature;
-      notifyExtension({
-        type: "APPLYOS_FIELDS_CHANGED",
-        fields,
-        status: "Fields changed"
-      });
-    }
+    // Coalesce bursts of DOM mutations (spinners, focus rings, class/style
+    // churn) into one re-scan. extractDetectedFields is a full-subtree query, so
+    // running it on every mutation tick is wasteful.
+    if (observerDebounce) return;
+    observerDebounce = window.setTimeout(() => {
+      observerDebounce = undefined;
+      const scope =
+        currentPlatform === "linkedin" ? findLinkedInEasyApplyRoot() : null;
+      const fields = extractDetectedFields(currentPlatform, scope);
+      const signature = fieldSignature(fields);
+      if (signature !== lastFieldSignature) {
+        lastFieldSignature = signature;
+        notifyExtension({
+          type: "APPLYOS_FIELDS_CHANGED",
+          fields,
+          status: "Fields changed"
+        });
+      }
+    }, 300);
   });
   observer.observe(document.documentElement, {
     childList: true,
@@ -151,6 +174,8 @@ function stopObserver(): void {
   removeDependencyListeners = undefined;
   if (observerTimeout) window.clearTimeout(observerTimeout);
   observerTimeout = undefined;
+  if (observerDebounce) window.clearTimeout(observerDebounce);
+  observerDebounce = undefined;
 }
 
 function fieldSignature(fields: ReturnType<typeof extractDetectedFields>): string {

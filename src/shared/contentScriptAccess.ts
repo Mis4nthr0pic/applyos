@@ -1,5 +1,5 @@
 import type { ExtractedJobPayload } from "../adapters/extractJob";
-import { mergeFrameScanResults, mergeFrameScanSnapshot, looksLikeEmbeddedAtsPage, looksLikeNativeAtsPage, type FrameScanResult } from "./scanFrames";
+import { mergeFrameScanResults, mergeFrameScanSnapshot, looksLikeEmbeddedAtsPage, looksLikeInlineApplicationFormPage, looksLikeNativeAtsPage, type FrameScanResult } from "./scanFrames";
 import type { ContentMessage, ScanResult } from "./types";
 
 export const CONTENT_SCRIPT_FILE = "assets/content.js";
@@ -139,8 +139,17 @@ async function scanAllFrames(tabId: number, message: Extract<ContentMessage, { t
   const frameCount = (await getFrameIds(tabId)).length;
   const embeddedAts = looksLikeEmbeddedAtsPage(tabUrl, topFrame?.context.bodyText, topFrame?.context);
   const nativeAts = looksLikeNativeAtsPage(tabUrl);
-  const pollDelays =
-    embeddedAts || frameCount > 1 ? [0, 600, 1200, 2000, 2800] : nativeAts ? [0, 400, 900] : [0, 500, 1500];
+  const inlineForm = looksLikeInlineApplicationFormPage(tabUrl);
+  const pollDelays = embeddedAts
+    ? [0, 600, 1200, 2000, 2800]
+    : inlineForm
+      ? [0, 250]
+      : nativeAts
+        ? [0, 400, 900]
+        : frameCount > 1
+          ? [0, 500, 1200]
+          : [0, 400];
+  const stablePollsNeeded = embeddedAts ? 2 : 1;
 
   for (const delay of pollDelays) {
     if (delay > 0) {
@@ -156,7 +165,8 @@ async function scanAllFrames(tabId: number, message: Extract<ContentMessage, { t
     const totalFields = [...frameSnapshots.values()].reduce((sum, result) => sum + result.fields.length, 0);
     if (totalFields > 0 && totalFields === previousTotalFields) {
       stablePolls += 1;
-      if (stablePolls >= 2 && totalFields >= 4) break;
+      if (stablePolls >= stablePollsNeeded && totalFields >= 4) break;
+      if (stablePolls >= stablePollsNeeded && inlineForm && totalFields >= 1) break;
     } else {
       stablePolls = 0;
     }

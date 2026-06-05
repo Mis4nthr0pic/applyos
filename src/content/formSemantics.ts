@@ -1,4 +1,5 @@
 import { PROFILE_LINK_PLATFORM_PATTERN } from "../shared/profileLinkFields";
+import { enhanceLinkedInFieldLabel, extractLinkedInQuestionLabel } from "./linkedinForm";
 import { isElementVisible } from "./pageContext";
 import { normalizeText, uniqueStrings } from "./text";
 
@@ -8,6 +9,7 @@ const NARROW_FIELD_CONTAINER_SELECTORS =
 /** Broader fallbacks when narrow wrappers are missing. */
 export const FIELD_CONTAINER_SELECTORS = [
   NARROW_FIELD_CONTAINER_SELECTORS,
+  "[data-test-form-element], .jobs-easy-apply-form-element",
   "fieldset",
   "[role='group']",
   "[role='radiogroup']",
@@ -69,6 +71,17 @@ function extractLeverApplicationLabel(input: HTMLElement): string {
 export function extractQuestionLabel(_container: HTMLElement, input?: HTMLElement | null): string {
   if (!input) return pickBestQuestionLabel(collectContainerLabels(_container));
 
+  const linkedInLabel = enhanceLinkedInFieldLabel(_container, input);
+  if (linkedInLabel.length >= 8) return linkedInLabel.slice(0, 500);
+
+  const formElement = input.closest<HTMLElement>(
+    "[data-test-form-element], .jobs-easy-apply-form-element"
+  );
+  if (formElement) {
+    const label = extractLinkedInQuestionLabel(formElement);
+    if (label.length >= 8) return label.slice(0, 500);
+  }
+
   const leverLabel = extractLeverApplicationLabel(input);
   if (leverLabel.length >= 8) return leverLabel.slice(0, 500);
 
@@ -97,7 +110,80 @@ function isPlaceholderLabel(label: string): boolean {
   return /^(type here|enter text|enter your|select|choose|search)\b/i.test(label.trim());
 }
 
+export function isValidFieldPromptLabel(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 3) return false;
+  if (YES_NO_OPTION_PATTERN.test(trimmed)) return false;
+  if (/^please (enter|select|upload|provide)/i.test(trimmed)) return false;
+  if (/^click to upload/i.test(trimmed)) return false;
+  return true;
+}
+
+/** Labels stacked above inputs (Gem job boards, many custom career pages). */
+export function extractStackedFieldLabel(input: HTMLElement): string {
+  let current: HTMLElement | null = input;
+  for (let depth = 0; depth < 8 && current; depth += 1) {
+    let sibling = current.previousElementSibling;
+    while (sibling) {
+      if (sibling instanceof HTMLElement) {
+        const text = cleanLabelText(sibling.innerText || sibling.textContent || "");
+        if (isValidFieldPromptLabel(text)) return text.slice(0, 500);
+      }
+      sibling = sibling.previousElementSibling;
+    }
+    current = current.parentElement;
+  }
+  return "";
+}
+
+/** Find the smallest container that holds a full native radio group. */
+export function findNativeRadioGroupScope(radio: HTMLInputElement): HTMLElement | null {
+  let node: HTMLElement | null = radio.parentElement;
+  for (let depth = 0; depth < 8 && node; depth += 1) {
+    const radios = node.querySelectorAll('input[type="radio"]');
+    if (radios.length >= 2) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+export function extractRadioGroupQuestionLabel(radio: HTMLInputElement): string {
+  const stacked = extractStackedFieldLabel(radio);
+  if (stacked.length >= 8 && !YES_NO_OPTION_PATTERN.test(stacked)) return stacked;
+
+  const scope = findNativeRadioGroupScope(radio);
+  if (!scope) return "";
+
+  let container: HTMLElement | null = scope.parentElement;
+  for (let depth = 0; depth < 4 && container; depth += 1) {
+    for (const child of container.children) {
+      if (child.contains(scope)) break;
+      if (!(child instanceof HTMLElement)) continue;
+      const text = cleanLabelText(child.innerText || child.textContent || "");
+      if (text.length >= 8 && isValidFieldPromptLabel(text)) return text.slice(0, 500);
+    }
+
+    const lines = (container.innerText || "")
+      .split("\n")
+      .map((line) => cleanLabelText(line))
+      .filter((line) => line.length >= 8 && isValidFieldPromptLabel(line));
+    const prompt = lines.find((line) => !YES_NO_OPTION_PATTERN.test(line) && (line.includes("?") || line.length >= 12));
+    if (prompt) return prompt.slice(0, 500);
+
+    container = container.parentElement;
+  }
+
+  return "";
+}
+
 function extractInputScopedLabel(input: HTMLElement): string {
+  if (
+    input.id === "country" &&
+    input.closest(".phone-input__country, .phone-input, fieldset.phone-input")
+  ) {
+    return "Country";
+  }
+
   if (input.id) {
     const explicit = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(input.id)}"]`);
     const explicitText = cleanLabelText(explicit?.innerText || "");
@@ -111,24 +197,8 @@ function extractInputScopedLabel(input: HTMLElement): string {
   const previousSiblingLabel = extractPreviousSiblingLabel(input);
   if (previousSiblingLabel) return previousSiblingLabel.slice(0, 500);
 
-  let current: HTMLElement | null = input.parentElement;
-  for (let depth = 0; depth < 3 && current; depth += 1) {
-    let sibling = current.previousElementSibling;
-    while (sibling) {
-      if (sibling instanceof HTMLElement) {
-        if (sibling.matches("label, .label, .application-label, .field-label")) {
-          const text = cleanLabelText(sibling.innerText || sibling.textContent || "");
-          if (text.length >= 8) return text.slice(0, 500);
-        }
-        const text = cleanLabelText(sibling.innerText || sibling.textContent || "");
-        if (text.length >= 12 && text.length <= 300 && !YES_NO_OPTION_PATTERN.test(text)) {
-          return text.slice(0, 500);
-        }
-      }
-      sibling = sibling.previousElementSibling;
-    }
-    current = current.parentElement;
-  }
+  const stacked = extractStackedFieldLabel(input);
+  if (stacked) return stacked;
 
   return "";
 }
@@ -180,7 +250,7 @@ function extractPreviousSiblingLabel(input: HTMLElement): string {
   while (sibling) {
     if (sibling instanceof HTMLElement) {
       const text = cleanLabelText(sibling.innerText || sibling.textContent || "");
-      if (text.length >= 8 && text.length <= 300 && !YES_NO_OPTION_PATTERN.test(text)) {
+      if (text.length <= 300 && isValidFieldPromptLabel(text)) {
         return text;
       }
     }

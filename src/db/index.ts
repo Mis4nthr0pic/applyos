@@ -16,6 +16,7 @@ import {
   type UserProfile
 } from "../shared/types";
 import { normalizeText } from "../matching/normalize";
+import { cleanupStoredAnswerBank } from "../shared/answerBankCleanup";
 import { ensureCvLibrarySeeded } from "./seedCvLibrary";
 
 class ApplyOSDatabase extends Dexie {
@@ -128,6 +129,14 @@ export async function initializeDatabase(): Promise<void> {
   }
   if ((await db.savedAnswers.count()) === 0) {
     await db.savedAnswers.bulkPut(SAMPLE_ANSWERS);
+  } else {
+    await cleanupStoredAnswerBank(
+      () => db.savedAnswers.toArray(),
+      async (answers) => {
+        await db.savedAnswers.clear();
+        if (answers.length) await db.savedAnswers.bulkPut(answers);
+      }
+    );
   }
   const experienceDatabase = await db.experienceDatabase.get("default");
   if (!experienceDatabase?.markdown?.trim()) {

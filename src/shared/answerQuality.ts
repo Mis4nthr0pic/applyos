@@ -3,7 +3,7 @@ import type { DetectedField } from "./types";
 const LOCATION_LABEL_PATTERN = /\b(country|nationality|residence|citizenship|work location|anticipated work location)\b/i;
 
 const SHORT_VALUE_ALLOWED_LABELS =
-  /\b(country|nationality|residence|citizenship|state|province|timezone|time zone|pronouns)\b/i;
+  /\b(country|nationality|residence|citizenship|state|province|timezone|time zone|pronouns|location|city)\b/i;
 
 /** Reject country codes and other fragments that should not fill unrelated fields. */
 export function isUnsafeShortAnswer(field: DetectedField, value: string): boolean {

@@ -1,8 +1,10 @@
 import { db } from "../db";
 import { hasCloseAnswerMatch, hasExactSavedAnswer } from "../matching/answerMatcher";
 import { normalizeText } from "../matching/normalize";
+import { sanitizeSavedQuestion, shouldRemoveSavedAnswer } from "./answerBankQuestions";
 import { isAutoSavableField } from "./screeningFields";
 import { DEFAULT_SETTINGS, type DetectedField, type SavedAnswer } from "./types";
+import { SAFE_PROFILE_CATEGORIES } from "./constants";
 
 import { isUnsafeShortAnswer } from "./answerQuality";
 import { isProfileLinkField } from "./profileLinkFields";
@@ -31,6 +33,7 @@ export async function saveFieldAnswer(
 ): Promise<"saved" | "updated" | "skipped"> {
   const settings = { ...DEFAULT_SETTINGS, ...(await db.settings.get("default")) };
   if (!settings.autoSaveNewAnswers) return "skipped";
+  if (field.category && SAFE_PROFILE_CATEGORIES.includes(field.category)) return "skipped";
   if (isProfileLinkField(field)) return "skipped";
   if (!isAutoSavableField(field)) return "skipped";
 
@@ -38,10 +41,13 @@ export async function saveFieldAnswer(
   if (!trimmed) return "skipped";
   if (isUnsafeShortAnswer(field, trimmed)) return "skipped";
 
-  const existing = await db.savedAnswers.toArray();
-  const normalizedQuestion = normalizeText(field.label);
+  const question = sanitizeSavedQuestion(field.label);
+  if (shouldRemoveSavedAnswer(question, trimmed)) return "skipped";
 
-  if (hasExactSavedAnswer(existing, field.label, trimmed)) return "skipped";
+  const existing = await db.savedAnswers.toArray();
+  const normalizedQuestion = normalizeText(question);
+
+  if (hasExactSavedAnswer(existing, question, trimmed)) return "skipped";
 
   const sameQuestion = existing.find((answer) => answer.normalizedQuestion === normalizedQuestion);
   const timestamp = new Date().toISOString();
@@ -60,9 +66,9 @@ export async function saveFieldAnswer(
 
   await db.savedAnswers.put({
     id: crypto.randomUUID(),
-    title: field.label.slice(0, 80),
+    title: question.slice(0, 80),
     category: answerCategory(field.category),
-    originalQuestion: field.label,
+    originalQuestion: question,
     normalizedQuestion,
     answer: trimmed,
     tags: ["auto_saved", ...(field.category ? [field.category] : [])],

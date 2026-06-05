@@ -1,17 +1,7 @@
 import type { InsertResult } from "../shared/types";
 import { parsePhoneNumber, type ParsedPhone } from "../shared/phoneFormat";
-import { optionMatches } from "./text";
-
-function dispatchInputEvents(element: HTMLElement): void {
-  element.dispatchEvent(new Event("input", { bubbles: true }));
-  element.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
-function setNativeInputValue(element: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  setter?.call(element, value);
-  dispatchInputEvents(element);
-}
+import { optionMatches, optionMatchesCountry } from "./text";
+import { setControlledInputValue } from "./controlledInput";
 
 export function isCompositePhoneInput(element: HTMLElement): boolean {
   return (
@@ -79,6 +69,7 @@ function phoneOptionMatches(optionText: string, parsed: ParsedPhone): boolean {
   const normalized = optionText.replace(/\s+/g, " ").trim();
   if (!normalized || normalized.toLowerCase() === "select...") return false;
   if (parsed.dialCode && normalized.includes(`+${parsed.dialCode}`)) return true;
+  if (parsed.countryName && optionMatchesCountry(normalized, parsed.countryName)) return true;
   if (parsed.countryName && optionMatches(normalized, parsed.countryName)) return true;
   return false;
 }
@@ -107,9 +98,7 @@ function selectItiCountry(phoneInput: HTMLInputElement, parsed: ParsedPhone): bo
 }
 
 function setNationalPhoneNumber(phoneInput: HTMLInputElement, national: string): void {
-  phoneInput.focus();
-  setNativeInputValue(phoneInput, national);
-  phoneInput.blur();
+  setControlledInputValue(phoneInput, national);
 }
 
 export function insertPhoneFieldValue(

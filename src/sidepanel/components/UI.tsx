@@ -66,17 +66,24 @@ export function Notice({
 
 export function LoadingPanel({
   label,
-  detail
+  detail,
+  onCancel
 }: {
   label: string;
   detail?: string;
+  onCancel?: () => void;
 }) {
   return (
     <div className="loading-panel" role="status" aria-live="polite" aria-busy="true">
       <LoaderCircle size={22} className="spin" aria-hidden="true" />
-      <div>
+      <div className="loading-panel-copy">
         <strong>{label}</strong>
         {detail ? <p>{detail}</p> : null}
+        {onCancel ? (
+          <button type="button" className="button button-secondary loading-panel-cancel" onClick={onCancel}>
+            Stop request
+          </button>
+        ) : null}
       </div>
     </div>
   );

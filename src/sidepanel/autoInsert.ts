@@ -1,9 +1,10 @@
 import { findBestScreeningAnswer, findAnswerMatches } from "../matching/answerMatcher";
 import { isUnsafeShortAnswer } from "../shared/answerQuality";
 import { isApplicationQuestionField } from "../shared/applicationFields";
-import { isProfileLinkField } from "../shared/profileLinkFields";
+import { isProfileLinkField, labelRequestsProfileLink } from "../shared/profileLinkFields";
 import { SCREENING_QUESTION_CATEGORIES, DOCUMENT_CATEGORIES, SAFE_PROFILE_CATEGORIES } from "../shared/constants";
 import { withEffectiveCategory } from "../shared/screeningFields";
+import { isReactControlledFormHost } from "../shared/reactFormHosts";
 import type { AnswerSuggestion, DetectedField, SavedAnswer, UserProfile } from "../shared/types";
 import { insertIntoField, profileValueForField, sendToActiveTab } from "./lib";
 
@@ -47,9 +48,33 @@ function normalizeOption(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export function normalizeYesNoAnswer(value: string, options?: string[]): string {
+  if (!options?.length) return value;
+  const yesOption = options.find((option) => /^yes$/i.test(option.trim()));
+  const noOption = options.find((option) => /^no$/i.test(option.trim()));
+  if (!yesOption || !noOption) return value;
+
+  const lower = value.trim().toLowerCase();
+  if (
+    /^(no|n|false)\b/.test(lower) ||
+    /\b(not authorized|no sponsorship|requires? sponsorship|need sponsorship|cannot|can't)\b/.test(lower)
+  ) {
+    return noOption;
+  }
+  if (/^(yes|y|true)\b/.test(lower) || /\b(authorized|eligible|legally)\b/.test(lower)) {
+    return yesOption;
+  }
+  return value;
+}
+
 export function formatAnswerForField(field: DetectedField, value: string): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "NO_FIT") return trimmed;
+
+  if (field.options?.length && (field.fieldType === "radio" || field.fieldType === "select")) {
+    const normalized = normalizeYesNoAnswer(trimmed, field.options);
+    if (normalized !== trimmed) return normalized;
+  }
 
   if (field.fieldType === "number" || /\bhow many\b/i.test(field.label)) {
     const match = trimmed.match(/\b(\d{1,3})\b/);
@@ -61,8 +86,9 @@ export function formatAnswerForField(field: DetectedField, value: string): strin
 
 function valueMatchesFieldOptions(field: DetectedField, value: string): boolean {
   if (!field.options?.length) return true;
+  const formatted = formatAnswerForField(field, value);
   if (field.fieldType !== "radio" && field.fieldType !== "select") return true;
-  const normalized = normalizeOption(value);
+  const normalized = normalizeOption(formatted);
   return field.options.some((option) => {
     const candidate = normalizeOption(option);
     if (candidate === normalized) return true;
@@ -80,7 +106,11 @@ async function fieldIsEmpty(field: DetectedField): Promise<boolean> {
     selectorHint: field.selectorHint,
     frameId: field.frameId
   });
-  return !result.value?.trim();
+  const value = result.value?.trim() ?? "";
+  if (!value) return true;
+  // DOM may show a value while React form state is still empty (Ashby, etc.) — re-commit on autofill.
+  if (isReactControlledFormHost(field.platform)) return true;
+  return false;
 }
 
 function resolveInsertValue(
@@ -96,17 +126,13 @@ function resolveInsertValue(
     return { value: formatAnswerForField(field, suggestion.answer) };
   }
 
-  if (isProfileLinkField(resolvedField)) {
-    const profileValue = profileValueForField(resolvedField, userProfile);
-    if (profileValue && !isUnsafeShortAnswer(resolvedField, profileValue)) {
-      return { value: profileValue };
-    }
-    return undefined;
-  }
-
   const profileValue = profileValueForField(resolvedField, userProfile);
   if (profileValue && !isUnsafeShortAnswer(resolvedField, profileValue)) {
-    return { value: profileValue };
+    return { value: formatAnswerForField(field, profileValue) };
+  }
+
+  if (isProfileLinkField(resolvedField) || labelRequestsProfileLink(resolvedField.label, resolvedField.fieldType)) {
+    return undefined;
   }
 
   if (isApplicationQuestionField(resolvedField)) {
@@ -114,7 +140,7 @@ function resolveInsertValue(
       (answer) => answer.normalizedQuestion === resolvedField.normalizedLabel
     );
     if (exact && !isUnsafeShortAnswer(resolvedField, exact.answer)) {
-      return { value: exact.answer, savedAnswerId: exact.id };
+      return { value: formatAnswerForField(field, exact.answer), savedAnswerId: exact.id };
     }
     return undefined;
   }
@@ -128,7 +154,7 @@ function resolveInsertValue(
     const screeningMatch = findBestScreeningAnswer(resolvedField, savedAnswers, 0.72);
     if (screeningMatch && !isUnsafeShortAnswer(resolvedField, screeningMatch.answer.answer)) {
       return {
-        value: screeningMatch.answer.answer,
+        value: formatAnswerForField(field, screeningMatch.answer.answer),
         savedAnswerId: screeningMatch.answer.id
       };
     }
@@ -145,7 +171,7 @@ function resolveInsertValue(
     best.confidence >= answerBankMinConfidence &&
     !isUnsafeShortAnswer(resolvedField, best.answer.answer)
   ) {
-    return { value: best.answer.answer, savedAnswerId: best.answer.id };
+    return { value: formatAnswerForField(field, best.answer.answer), savedAnswerId: best.answer.id };
   }
 
   return undefined;
@@ -211,6 +237,16 @@ export async function autoInsertFields(
       }
       if (field.category === "country" || field.category === "state") {
         await delay(350);
+      } else if (
+        field.widget === "location_autocomplete" ||
+        field.widget === "country_dropdown" ||
+        field.widget === "combobox"
+      ) {
+        await delay(500);
+      } else if (field.fieldType === "radio" && field.options?.some((option) => /^yes$/i.test(option))) {
+        await delay(250);
+      } else if (isReactControlledFormHost(field.platform)) {
+        await delay(150);
       }
     } catch (error) {
       result.failures.push({

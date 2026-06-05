@@ -4,7 +4,8 @@ import { callOpenRouterJson } from "./openrouter";
 
 export async function buildOptimizedExperienceDatabase(
   cvTexts: Array<{ fileName: string; text: string }>,
-  settings: Settings
+  settings: Settings,
+  signal?: AbortSignal
 ): Promise<string> {
   if (!cvTexts.length) throw new Error("Upload at least one CV to build the database.");
 
@@ -20,7 +21,8 @@ ${cvTexts
   )
   .join("\n\n")}
 
-Return JSON: {"markdown":"full markdown document"}`
+Return JSON: {"markdown":"full markdown document"}`,
+    signal
   )) as { markdown?: string };
 
   const markdown = payload.markdown?.trim();

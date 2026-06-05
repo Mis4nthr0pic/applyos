@@ -106,6 +106,17 @@ main { padding: 14px; max-width: 760px; margin: 0 auto; }
   color: var(--accent);
 }
 
+.loading-panel-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.loading-panel-cancel {
+  margin-top: 10px;
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
 .badge { display: inline-flex; align-items: center; width: fit-content; max-width: 100%; padding: 3px 7px; border-radius: 999px; background: #edf1f6; color: #42526b; font-size: 10px; font-weight: 800; overflow-wrap: anywhere; }
 .badge-good { background: #e5f5ed; color: #11623d; }
 .badge-warn { background: #fff3db; color: #815000; }

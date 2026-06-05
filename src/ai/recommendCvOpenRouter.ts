@@ -7,10 +7,11 @@ import { callOpenRouterJson } from "./openrouter";
 export async function recommendCvWithOpenRouter(
   job: JobInfo,
   cvSources: CvSource[],
-  settings: Settings
+  settings: Settings,
+  signal?: AbortSignal
 ): Promise<CvRecommendation> {
-  const fallback = recommendCvLocally(job, cvSources);
   if (!cvSources.length) throw new Error("Import CVs in the Experience tab first.");
+  const fallback = recommendCvLocally(job, cvSources);
 
   const payload = (await callOpenRouterJson(
     settings,
@@ -43,7 +44,8 @@ Return JSON:\n${JSON.stringify({
       confidence: 0,
       reason: "",
       alternatives: [{ fileName: "", reason: "", score: 0 }]
-    })}`
+    })}`,
+    signal
   )) as {
     recommendedFileName?: string;
     confidence?: number;

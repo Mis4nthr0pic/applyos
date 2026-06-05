@@ -23,7 +23,16 @@ const EXPLICIT_PROFILE_LABEL_PATTERN =
 const SINGLE_WORD_PROFILE_LABEL =
   /^(discord|github|gitlab|youtube|telegram|whatsapp|linkedin|twitter|instagram|tiktok|twitch|portfolio|website|claude|chatgpt|gpt|openai|deepseek|openrouter|gemini|copilot|perplexity|grok|mistral|huggingface|cursor|anthropic|groq|replit|poe)$/i;
 
-export const PROFILE_LINK_CATEGORIES: FieldCategory[] = [...SAFE_PROFILE_CATEGORIES, "social_profile"];
+const PROFILE_LINK_FIELD_CATEGORIES: FieldCategory[] = [
+  "linkedin",
+  "github",
+  "portfolio",
+  "website",
+  "social_profile"
+];
+
+/** @deprecated Use PROFILE_LINK_FIELD_CATEGORIES */
+export const PROFILE_LINK_CATEGORIES = PROFILE_LINK_FIELD_CATEGORIES;
 
 /** True when the field asks for a profile URL, handle, or account — never register in Answer Bank. */
 export function isProfileLinkField(
@@ -32,18 +41,38 @@ export function isProfileLinkField(
   const label = field.label.trim();
   if (!label) return false;
 
-  if (field.category && PROFILE_LINK_CATEGORIES.includes(field.category)) return true;
-  if (EXPLICIT_PROFILE_LABEL_PATTERN.test(label)) return true;
-
-  if (!PROFILE_LINK_PLATFORM_PATTERN.test(label)) return false;
-
-  if (looksLikeApplicationQuestion(label) && label.includes("?")) {
-    if (!/\b(profile|url|link|username|handle|account|channel|api key|api token)\b/i.test(label)) return false;
+  // Gem and similar boards sometimes use a textarea for duplicate "LinkedIn Profile" essay prompts.
+  if (
+    field.fieldType === "textarea" &&
+    /\blinkedin\b/i.test(label) &&
+    !/\b(url|link)\b/i.test(label)
+  ) {
+    return false;
   }
 
-  if (PROFILE_INTENT_PATTERN.test(label) || field.fieldType === "url") return true;
+  if (field.category && PROFILE_LINK_FIELD_CATEGORIES.includes(field.category)) {
+    if (field.fieldType === "textarea" && !/\b(url|link)\b/i.test(label)) return false;
+    return true;
+  }
+  return labelRequestsProfileLink(label, field.fieldType);
+}
 
-  if (SINGLE_WORD_PROFILE_LABEL.test(label)) return true;
+/** True when a label asks for a social/profile URL or handle (not country/location). */
+export function labelRequestsProfileLink(label: string, fieldType?: string): boolean {
+  const trimmed = label.trim();
+  if (!trimmed) return false;
+
+  if (EXPLICIT_PROFILE_LABEL_PATTERN.test(trimmed)) return true;
+
+  if (!PROFILE_LINK_PLATFORM_PATTERN.test(trimmed)) return false;
+
+  if (looksLikeApplicationQuestion(trimmed) && trimmed.includes("?")) {
+    if (!/\b(profile|url|link|username|handle|account|channel|api key|api token)\b/i.test(trimmed)) return false;
+  }
+
+  if (PROFILE_INTENT_PATTERN.test(trimmed) || fieldType === "url") return true;
+
+  if (SINGLE_WORD_PROFILE_LABEL.test(trimmed)) return true;
 
   return false;
 }

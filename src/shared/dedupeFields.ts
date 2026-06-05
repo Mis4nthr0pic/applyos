@@ -15,6 +15,8 @@ function fieldQualityScore(field: DetectedField): number {
 
 function fieldDedupeKey(field: DetectedField): string {
   const frame = field.frameId ?? 0;
+  if (field.fieldId) return `${frame}:fid:${field.fieldId}`;
+
   const nameMatch = field.selectorHint.match(/\[name="([^"]+)"\]/i);
   if (nameMatch?.[1]) return `${frame}:name:${nameMatch[1]}`;
 

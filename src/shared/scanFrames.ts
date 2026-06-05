@@ -32,6 +32,15 @@ export function looksLikeEmbeddedAtsPage(
   return false;
 }
 
+/** Native inline forms (e.g. Gem) — short poll only, not embedded iframe ATS. */
+export function looksLikeInlineApplicationFormPage(tabUrl: string): boolean {
+  try {
+    return new URL(tabUrl).hostname.toLowerCase() === "jobs.gem.com";
+  } catch {
+    return /jobs\.gem\.com/i.test(tabUrl);
+  }
+}
+
 export function looksLikeNativeAtsPage(tabUrl: string): boolean {
   try {
     const host = new URL(tabUrl).hostname.toLowerCase();
