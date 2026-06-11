@@ -267,6 +267,7 @@ Instructions:
 8. Apply De-AI-ify rules to every answer: form-box tone, no cover-letter voice, no banned words (seasoned, eager, leverage, aligns perfectly, etc.). Return only the final de-AI-ified text in JSON.
 9. For "how many" count fields, return only a plain number (e.g. "12"), not a sentence.
 10. Preserve each input fieldId exactly in your JSON response.
+11. Open-ended questions (why-company, why-role, motivation, about-you, behavioral): 60-120 words, match the gold-standard voice examples in the system prompt, name at least one real employer or project, at most one metric, and no sentence whose only job is enthusiasm or fit-claiming.
 
 Return JSON with an answers array containing exactly ${questions.length} entries, one per fieldId.`,
     signal

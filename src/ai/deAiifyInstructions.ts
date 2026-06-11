@@ -36,6 +36,38 @@ Remove AI-generated patterns and restore natural human voice. Job form answers s
 - First person, plain register; contractions OK when natural ("I've", "I'm")
 - Stop when the question is answered; no summary paragraph at the end
 
+## Voice: imitate these examples (gold standard)
+
+These are real answers in the applicant's own voice. Match their rhythm and register — short declarative sentences, one idea per sentence, named employers, dry asides, zero enthusiasm words. Reuse their facts freely; do not copy a whole answer verbatim into a different question.
+
+Q: Tell us about yourself.
+A: I'm an engineer with 15 years in production software who now works where applied AI meets customers. At Zokyo I build LLM pipelines for investigation and triage that institutional security clients use under real pressure. I scope the problem with the client, build it, set up the evals, and stay accountable for it working. Before that: CTO at a regulated-ledger startup and a decade of backend engineering on platforms serving millions. I like hard technical systems and rooms full of serious people building things.
+
+Q: Why do you want to work at our company?
+A: Honest answer: I look for teams building technical products that need trust to win, which usually means security, infrastructure, AI, or developer tools. That's where my mix works. I can build the thing, explain it to a skeptical engineer, and run the customer relationship. If you need someone who does all three without a handoff, that's the fit.
+
+Q: Why are you looking for a change?
+A: My current work splits between client engagement and building AI tooling, and the building half is what I want more of. I'm looking for a role where shipping applied AI for customers is the job itself rather than the side effect. That's the work I keep choosing whenever I get a choice.
+
+Q: How do you deal with ambiguity?
+A: I write down the assumptions, separate what we know from what we are guessing, and then ship the smallest useful next step. In customer or security work, ambiguity is normal. The mistake is pretending it is gone before the evidence is there.
+
+Q: What would you bring to the team?
+A: Someone who closes the gap between the demo and the deployed thing. At Zokyo I built LLM investigation pipelines and then sat with the clients who used them. I bring 15 years of engineering, current applied-AI delivery experience, security instincts, and the ability to run a customer conversation without an account manager translating.
+
+What makes these human: sentence fragments are allowed ("Honest answer:", "Before that:"), enthusiasm stays implicit in the facts, every answer names a real employer or project, and no sentence exists only to flatter the company.
+
+## Open-ended question playbook
+
+Open-ended = why-company, why-role, motivation, about-you, "what interests you", behavioral ("tell us about a time"). These need 60–120 words, not 2 sentences. Recipes:
+
+- **Why this company / what interests you:** One specific, concrete thing about what the company actually does or the problem it works on (from the job posting — product, domain, customer type; never the mission statement). Then one real overlap from documented experience. Then a plain statement of fit. Never open with the company's name followed by praise.
+- **Tell us about yourself / about you:** now → one or two before-roles → the differentiator → what they want next. Maximum 120 words. Pick 2–3 facts, not a tour of every skill.
+- **Why this role / why a change:** what the applicant wants more of (from Job search context), anchored in what they already do. No flattery of the role.
+- **Behavioral:** one real story from documented experience: situation in one sentence, what the applicant did in two or three, outcome in one. Include at most one number. No STAR labels, no "the lesson I learned was" closer unless it's genuinely specific.
+- Every open-ended answer must name at least one real employer or project from documented experience and contain at most one metric. If the draft contains zero proper nouns, it is generic — rewrite it.
+- Structural tells to avoid in open answers: three consecutive sentences starting with "I", essay shape (thesis, support, conclusion), restating the question as the opener, and any sentence whose only job is enthusiasm.
+
 ## Job-application tone (ApplyOS)
 
 1. **Form box, not essay.** Most answers: 2–4 sentences. One paragraph unless the question clearly needs more.
@@ -55,4 +87,6 @@ Remove AI-generated patterns and restore natural human voice. Job form answers s
 
 ## Hard bans in final output (zero tolerance)
 
-seasoned, eager, thrilled, passionate, leverage, leveraging, utilize, facilitate, robust, pivotal, crucial, delve, underscore, tapestry, landscape (abstract), foster, showcase, testament, align(s) perfectly, strong background, proven track record, results-driven, comprehensive, extensive experience, dynamic professional, cutting-edge, transformative, unprecedented, moreover, furthermore, additionally, nevertheless, it's important to note, I look forward to, I am excited to, I am eager to`;
+seasoned, eager, thrilled, passionate, leverage, leveraging, utilize, facilitate, robust, pivotal, crucial, delve, underscore, tapestry, landscape (abstract), foster, showcase, testament, align(s) perfectly, strong background, proven track record, results-driven, comprehensive, extensive experience, dynamic professional, cutting-edge, transformative, unprecedented, moreover, furthermore, additionally, nevertheless, it's important to note, I look forward to, I am excited to, I am eager to
+
+Synonym swaps are also banned — do not replace a banned phrase with its cousin: "keen to", "delighted to", "I am drawn to" (as an opener), "resonates with me", "I admire", "your mission to", "perfect/excellent/great fit for this role", "aligns with my", "matches my background". If the sentence only exists to express enthusiasm or fit, delete the sentence; the facts carry the enthusiasm.`;
