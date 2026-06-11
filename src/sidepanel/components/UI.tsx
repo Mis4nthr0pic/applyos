@@ -5,13 +5,18 @@ export function Button({
   variant = "secondary",
   loading,
   children,
+  className,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost" | "danger";
   loading?: boolean;
 }) {
   return (
-    <button className={`button button-${variant}`} disabled={loading || props.disabled} {...props}>
+    <button
+      {...props}
+      className={`button button-${variant}${className ? ` ${className}` : ""}`}
+      disabled={loading || props.disabled}
+    >
       {loading ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
       {children}
     </button>

@@ -36,6 +36,7 @@ import { Badge, Button, Card, EmptyState, Notice } from "../components/UI";
 
 interface Props {
   scan?: ScanResult;
+  scanStale?: boolean;
   fit?: JobFitScore;
   cvSources: CvSource[];
   cvRecommendation?: CvRecommendation;
@@ -131,6 +132,12 @@ export function DetectedFieldsTab(props: Props) {
             <span>Watch dynamic fields</span>
           </label>
         </div>
+        {props.scanStale ? (
+          <Notice tone="warning">
+            The page has changed since this scan. Fields, fit score, and CV pick below belong to the
+            previous page — rescan before inserting anything.
+          </Notice>
+        ) : null}
         {props.scan?.message ? <Notice tone="warning">{props.scan.message}</Notice> : null}
         {props.scan ? (
           <p className="subtle">
@@ -658,8 +665,21 @@ function ApplicationQuestion({
         </div>
       </div>
       {suggestion ? (
-        <Notice tone={suggestion.source === "no_fit" ? "danger" : "success"}>
+        <Notice
+          tone={
+            suggestion.source === "no_fit"
+              ? "danger"
+              : suggestion.requiresEditBeforeInsert
+                ? "warning"
+                : "success"
+          }
+        >
           <strong>{suggestion.source === "no_fit" ? "NO_FIT" : recommendationLabel(suggestion.source)}</strong>
+          {suggestion.requiresEditBeforeInsert && suggestion.answer && suggestion.answer !== "NO_FIT" ? (
+            <Badge tone="warn">
+              Low confidence ({Math.round((suggestion.confidence ?? 0) * 100)}%) — not auto-inserted, review first
+            </Badge>
+          ) : null}
           <p>{suggestion.answer || suggestion.reason}</p>
           {suggestion.answer && suggestion.answer !== "NO_FIT" ? (
             <InsertableValue

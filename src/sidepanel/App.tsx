@@ -112,6 +112,7 @@ export function App() {
   const [queue, setQueue] = React.useState<QueuedJobUrl[]>([]);
   const [currentQueueId, setCurrentQueueId] = React.useState<string>();
   const [scan, setScan] = React.useState<ScanResult>();
+  const [scanStale, setScanStale] = React.useState(false);
   const [fit, setFit] = React.useState<JobFitScore>();
   const [cvRecommendation, setCvRecommendation] = React.useState<CvRecommendation>();
   const [suggestions, setSuggestions] = React.useState<Record<string, AnswerSuggestion>>({});
@@ -158,6 +159,33 @@ export function App() {
   React.useEffect(() => {
     scanRef.current = scan;
   }, [scan]);
+  // Scan results describe one page; flag them when the active tab moves on so
+  // stale fields, fit score, and Insert buttons aren't mistaken for live ones.
+  React.useEffect(() => {
+    setScanStale(false);
+    if (!scan?.context.url) return;
+    const scanUrl = scan.context.url.split("#")[0];
+    const check = async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.url) setScanStale(tab.url.split("#")[0] !== scanUrl);
+      } catch {
+        // Tab may not be accessible; leave the flag as is.
+      }
+    };
+    const onUpdated = (_tabId: number, info: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+      if (info.url && tab.active) void check();
+    };
+    const onActivated = () => void check();
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onActivated.addListener(onActivated);
+    void check();
+    return () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onActivated.removeListener(onActivated);
+    };
+  }, [scan]);
+
   React.useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
@@ -675,6 +703,7 @@ export function App() {
 
     const nextSuggestions: Record<string, AnswerSuggestion> = {};
     const saveTasks: Promise<unknown>[] = [];
+    let heldForReview = 0;
     for (const result of results) {
       const isNoFit = result.answer === "NO_FIT";
       // Low-confidence answers require a manual edit before insert; saving them
@@ -691,14 +720,18 @@ export function App() {
         requiresEditBeforeInsert: requiresEdit
       };
 
-      if (!isNoFit && result.answer?.trim() && !requiresEdit) {
-        const field = applicationFields.find((item) => item.fieldId === result.fieldId);
-        if (field) {
-          saveTasks.push(
-            saveFieldAnswer(field, result.answer, scanResult.jobInfo.company, {
-              source: "generated_from_cv"
-            })
-          );
+      if (!isNoFit && result.answer?.trim()) {
+        if (requiresEdit) {
+          heldForReview += 1;
+        } else {
+          const field = applicationFields.find((item) => item.fieldId === result.fieldId);
+          if (field) {
+            saveTasks.push(
+              saveFieldAnswer(field, result.answer, scanResult.jobInfo.company, {
+                source: "generated_from_cv"
+              })
+            );
+          }
         }
       }
     }
@@ -708,7 +741,10 @@ export function App() {
     const mergedSuggestions = { ...(options.existingSuggestions ?? {}), ...nextSuggestions };
     setSuggestions(mergedSuggestions);
 
-    let noticeText = `Generated ${results.length} AI answer${results.length === 1 ? "" : "s"} for ${applicationFields.length} question${applicationFields.length === 1 ? "" : "s"} and saved them to your Answer Bank.`;
+    let noticeText = `Generated ${results.length} AI answer${results.length === 1 ? "" : "s"} for ${applicationFields.length} question${applicationFields.length === 1 ? "" : "s"}; ${saveTasks.length} saved to your Answer Bank.`;
+    if (heldForReview) {
+      noticeText += ` ${heldForReview} low-confidence answer${heldForReview === 1 ? " was" : "s were"} held for review — check the flagged fields below before inserting.`;
+    }
     if (fitScore.overallScore < currentSettings.jobFitThreshold) {
       noticeText += ` (Job fit is ${fitScore.overallScore}% — below your ${currentSettings.jobFitThreshold}% threshold, but answers were still generated.)`;
     }
@@ -1344,6 +1380,7 @@ export function App() {
     detected: (
       <DetectedFieldsTab
         scan={scan}
+        scanStale={scanStale}
         fit={fit}
         cvSources={cvSources}
         cvRecommendation={cvRecommendation}

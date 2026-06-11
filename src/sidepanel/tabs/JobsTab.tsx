@@ -34,7 +34,22 @@ function JobNotes({ job, onSave }: { job: TrackedJob; onSave: (job: TrackedJob) 
 export function JobsTab({ jobs, onSave, onDelete }: { jobs: TrackedJob[]; onSave: (job: TrackedJob) => void; onDelete: (id: string) => void }) {
   const [query, setQuery] = React.useState("");
   const [status, setStatus] = React.useState("");
-  const filtered = jobs.filter((job) => (!status || job.status === status) && (!query || `${job.title} ${job.company}`.toLowerCase().includes(query.toLowerCase())));
+  // Jobs arrive sorted by updatedAt, so saving notes would reorder the list
+  // mid-edit and steal focus. Freeze the order while the same set of jobs is
+  // shown; re-sort only when jobs are added or removed.
+  const orderRef = React.useRef<string[]>([]);
+  const ordered = React.useMemo(() => {
+    const ids = jobs.map((job) => job.id);
+    const previous = new Set(orderRef.current);
+    const sameSet = ids.length === previous.size && ids.every((id) => previous.has(id));
+    if (!sameSet) {
+      orderRef.current = ids;
+      return jobs;
+    }
+    const byId = new Map(jobs.map((job) => [job.id, job]));
+    return orderRef.current.map((id) => byId.get(id)).filter((job): job is TrackedJob => Boolean(job));
+  }, [jobs]);
+  const filtered = ordered.filter((job) => (!status || job.status === status) && (!query || `${job.title} ${job.company}`.toLowerCase().includes(query.toLowerCase())));
   return (
     <div className="stack">
       <div className="section-heading"><div><h1>Jobs</h1><p>Track selective applications locally.</p></div></div>

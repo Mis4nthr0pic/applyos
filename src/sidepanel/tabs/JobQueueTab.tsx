@@ -365,19 +365,25 @@ function QueueActions({
   onStatus: (item: QueuedJobUrl, status: QueueStatus) => void;
   onRemove?: (id: string) => void;
 }) {
+  // Two rows: the actions used on every job, then the occasional triage ones.
+  // ("Apply / Continue" and the old "Open Later" both set status "opened" —
+  // one button is enough.)
   return (
-    <div className="button-row">
-      <Button onClick={() => onOpen(item)}><ExternalLink size={16} /> Open</Button>
-      <Button onClick={onScan}><ScanSearch size={16} /> Scan Current Page</Button>
-      <Button onClick={() => onStatus(item, "applied")}>Mark Applied</Button>
-      <Button onClick={() => onStatus(item, "opened")}>Apply / Continue</Button>
-      <Button onClick={() => onStatus(item, "saved")}>Save Job</Button>
-      <Button onClick={() => onStatus(item, "skipped")}>Skip</Button>
-      <Button onClick={() => onStatus(item, "not_relevant")}>Not Relevant</Button>
-      <Button onClick={() => onStatus(item, "manual_review")}>Manual Review</Button>
-      <Button onClick={() => onStatus(item, "opened")}>Open Later</Button>
-      {onRemove ? <Button variant="danger" onClick={() => onRemove(item.id)}><Trash2 size={16} /> Remove</Button> : null}
-    </div>
+    <>
+      <div className="button-row">
+        <Button onClick={() => onOpen(item)}><ExternalLink size={16} /> Open</Button>
+        <Button onClick={onScan}><ScanSearch size={16} /> Scan Current Page</Button>
+        <Button variant="primary" onClick={() => onStatus(item, "applied")}>Mark Applied</Button>
+        <Button onClick={() => onStatus(item, "opened")}>Apply / Continue</Button>
+      </div>
+      <div className="button-row">
+        <Button variant="ghost" onClick={() => onStatus(item, "saved")}>Save Job</Button>
+        <Button variant="ghost" onClick={() => onStatus(item, "skipped")}>Skip</Button>
+        <Button variant="ghost" onClick={() => onStatus(item, "not_relevant")}>Not Relevant</Button>
+        <Button variant="ghost" onClick={() => onStatus(item, "manual_review")}>Manual Review</Button>
+        {onRemove ? <Button variant="danger" onClick={() => onRemove(item.id)}><Trash2 size={16} /> Remove</Button> : null}
+      </div>
+    </>
   );
 }
 
