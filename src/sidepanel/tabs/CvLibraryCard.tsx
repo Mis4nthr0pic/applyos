@@ -72,7 +72,14 @@ function CvLibraryItem({
 }) {
   const [draft, setDraft] = React.useState(cv);
 
-  React.useEffect(() => setDraft(cv), [cv]);
+  const lastIncoming = React.useRef(JSON.stringify(cv));
+  React.useEffect(() => {
+    // Only reset on real content changes — background refresh() must not wipe edits.
+    const incoming = JSON.stringify(cv);
+    if (incoming === lastIncoming.current) return;
+    lastIncoming.current = incoming;
+    setDraft(cv);
+  }, [cv]);
 
   return (
     <Card className="field-card">

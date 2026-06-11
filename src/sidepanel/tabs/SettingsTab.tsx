@@ -13,7 +13,15 @@ import { AiPromptsCard } from "./AiPromptsCard";
 
 export function SettingsTab({ settings, onSave, onExportAll, onImportAll, onClear }: { settings: Settings; onSave: (settings: Settings) => void; onExportAll: () => void; onImportAll: (file: File) => void; onClear: () => void }) {
   const [draft, setDraft] = React.useState(settings);
-  React.useEffect(() => setDraft(settings), [settings]);
+  const lastIncoming = React.useRef(JSON.stringify(settings));
+  React.useEffect(() => {
+    // refresh() creates fresh object identities; only reset the draft when the
+    // stored settings actually changed, so background refreshes don't wipe edits.
+    const incoming = JSON.stringify(settings);
+    if (incoming === lastIncoming.current) return;
+    lastIncoming.current = incoming;
+    setDraft(settings);
+  }, [settings]);
   return (
     <div className="stack">
       <div className="section-heading"><div><h1>Settings</h1><p>External AI is optional, disabled by default, and always user-triggered.</p></div></div>

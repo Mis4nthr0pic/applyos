@@ -637,7 +637,9 @@ export function App() {
     }));
 
     if (
-      options.interactive &&
+      // "Show data before sending" applies to every LLM call path, including
+      // auto-generate-on-scan — the panel is open and focused during scans,
+      // so the preview dialog is always feasible.
       currentSettings.showDataBeforeSending &&
       !confirmData(
         usingDatabase
@@ -675,6 +677,10 @@ export function App() {
     const saveTasks: Promise<unknown>[] = [];
     for (const result of results) {
       const isNoFit = result.answer === "NO_FIT";
+      // Low-confidence answers require a manual edit before insert; saving them
+      // to the Answer Bank would re-insert them via exact-question match anyway,
+      // so flagged answers are neither auto-inserted nor persisted.
+      const requiresEdit = (result.confidence ?? 0) < 0.7;
       nextSuggestions[result.fieldId] = {
         questionFieldId: result.fieldId,
         source: isNoFit ? "no_fit" : "experience_profile",
@@ -682,10 +688,10 @@ export function App() {
         sourceExperience: result.sourceExperience,
         confidence: result.confidence,
         reason: result.reason,
-        requiresEditBeforeInsert: true
+        requiresEditBeforeInsert: requiresEdit
       };
 
-      if (!isNoFit && result.answer?.trim()) {
+      if (!isNoFit && result.answer?.trim() && !requiresEdit) {
         const field = applicationFields.find((item) => item.fieldId === result.fieldId);
         if (field) {
           saveTasks.push(
@@ -1095,8 +1101,10 @@ export function App() {
       const cleanup = await cleanupStoredAnswerBank(
         () => db.savedAnswers.toArray(),
         async (cleaned) => {
-          await db.savedAnswers.clear();
-          if (cleaned.length) await db.savedAnswers.bulkPut(cleaned);
+          await db.transaction("rw", db.savedAnswers, async () => {
+            await db.savedAnswers.clear();
+            if (cleaned.length) await db.savedAnswers.bulkPut(cleaned);
+          });
         }
       );
       await refresh();
@@ -1122,8 +1130,10 @@ export function App() {
     const result = await cleanupStoredAnswerBank(
       () => db.savedAnswers.toArray(),
       async (cleaned) => {
-        await db.savedAnswers.clear();
-        if (cleaned.length) await db.savedAnswers.bulkPut(cleaned);
+        await db.transaction("rw", db.savedAnswers, async () => {
+          await db.savedAnswers.clear();
+          if (cleaned.length) await db.savedAnswers.bulkPut(cleaned);
+        });
       }
     );
     await refresh();

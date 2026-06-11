@@ -50,6 +50,10 @@ export function inferApplicationCategory(label: string): FieldCategory {
 }
 
 export function looksLikeNamedCustomAnswer(field: DetectedField): boolean {
+  // Ashby system fields (name/email/location/resume) also carry data-field-path,
+  // but they are profile fields, not custom questions — without this guard they
+  // get sent to the LLM and the generated text overwrites profile-filled values.
+  if (/data-field-path="_systemfield_/i.test(field.selectorHint)) return false;
   const hint = `${field.selectorHint} ${field.label}`.toLowerCase();
   const name =
     field.selectorHint.match(/name="([^"]+)"/i)?.[1]?.toLowerCase() ||

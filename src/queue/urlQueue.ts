@@ -70,7 +70,7 @@ export function classifyJobUrl(url: string): QueuePlatform {
     ["greenhouse", ["greenhouse.io"]],
     ["lever", ["lever.co"]],
     ["workable", ["workable.com"]],
-    ["workday", ["myworkdayjobs.com"]],
+    ["workday", ["myworkdayjobs.com", "myworkdaysite.com"]],
     ["smartrecruiters", ["smartrecruiters.com"]],
     ["bamboohr", ["bamboohr.com"]],
     ["recruitee", ["recruitee.com"]],

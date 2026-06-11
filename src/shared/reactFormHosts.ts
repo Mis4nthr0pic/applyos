@@ -4,7 +4,7 @@ export function isReactControlledFormHost(platform?: string, hostname?: string):
     hostname ??
     (typeof window !== "undefined" ? window.location.hostname : "")
   ).toLowerCase();
-  if (/ashbyhq\.com|greenhouse\.io|lever\.co|myworkdayjobs\.com|workday\.com|jobs\.gem\.com/i.test(host)) {
+  if (/ashbyhq\.com|greenhouse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|workday\.com|jobs\.gem\.com/i.test(host)) {
     return true;
   }
   return platform === "ashby" || platform === "greenhouse" || platform === "lever" || platform === "workday" || platform === "gem";

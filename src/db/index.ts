@@ -133,8 +133,10 @@ export async function initializeDatabase(): Promise<void> {
     await cleanupStoredAnswerBank(
       () => db.savedAnswers.toArray(),
       async (answers) => {
-        await db.savedAnswers.clear();
-        if (answers.length) await db.savedAnswers.bulkPut(answers);
+        await db.transaction("rw", db.savedAnswers, async () => {
+          await db.savedAnswers.clear();
+          if (answers.length) await db.savedAnswers.bulkPut(answers);
+        });
       }
     );
   }

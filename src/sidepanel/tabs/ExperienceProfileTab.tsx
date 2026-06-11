@@ -33,7 +33,12 @@ export function ExperienceProfileTab(props: Props) {
   const [json, setJson] = React.useState(JSON.stringify(props.profile ?? {}, null, 2));
   const [message, setMessage] = React.useState("");
 
+  const lastIncoming = React.useRef(JSON.stringify(props.profile ?? {}));
   React.useEffect(() => {
+    // Only reset on real content changes — background refresh() must not wipe edits.
+    const incoming = JSON.stringify(props.profile ?? {});
+    if (incoming === lastIncoming.current) return;
+    lastIncoming.current = incoming;
     setRawText(props.profile?.rawText ?? "");
     setSourceType(props.profile?.sourceType ?? "pasted_text");
     setJson(JSON.stringify(props.profile ?? {}, null, 2));

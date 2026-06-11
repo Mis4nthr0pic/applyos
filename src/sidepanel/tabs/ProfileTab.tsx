@@ -4,7 +4,14 @@ import { Button, Card, Field } from "../components/UI";
 
 export function ProfileTab({ profile, onSave }: { profile?: UserProfile; onSave: (profile: UserProfile) => void }) {
   const [draft, setDraft] = React.useState<UserProfile>(profile ?? {});
-  React.useEffect(() => setDraft(profile ?? {}), [profile]);
+  const lastIncoming = React.useRef(JSON.stringify(profile ?? {}));
+  React.useEffect(() => {
+    // Only reset on real content changes — background refresh() must not wipe edits.
+    const incoming = JSON.stringify(profile ?? {});
+    if (incoming === lastIncoming.current) return;
+    lastIncoming.current = incoming;
+    setDraft(profile ?? {});
+  }, [profile]);
   const fields: Array<[keyof UserProfile, string, string]> = [
     ["firstName", "First name", "text"], ["lastName", "Last name", "text"], ["fullName", "Full name", "text"],
     ["email", "Email", "email"],     ["phone", "Phone", "tel"], ["country", "Country", "text"],

@@ -44,42 +44,50 @@ export async function saveFieldAnswer(
   const question = sanitizeSavedQuestion(field.label);
   if (shouldRemoveSavedAnswer(question, trimmed)) return "skipped";
 
-  const existing = await db.savedAnswers.toArray();
-  const normalizedQuestion = normalizeText(question);
+  // Transaction makes the read-check-write atomic: the same capture arriving
+  // twice (background + sidepanel both handle the message) serializes here,
+  // so the second pass sees the first write and skips instead of duplicating.
+  return db.transaction("rw", db.savedAnswers, async () => {
+    const existing = await db.savedAnswers.toArray();
+    const normalizedQuestion = normalizeText(question);
 
-  if (hasExactSavedAnswer(existing, question, trimmed)) return "skipped";
+    if (hasExactSavedAnswer(existing, question, trimmed)) return "skipped";
 
-  const sameQuestion = existing.find((answer) => answer.normalizedQuestion === normalizedQuestion);
-  const timestamp = new Date().toISOString();
+    const sameQuestion = existing.find((answer) => answer.normalizedQuestion === normalizedQuestion);
+    const timestamp = new Date().toISOString();
 
-  if (sameQuestion) {
-    if (sameQuestion.answer.trim().toLowerCase() === trimmed.toLowerCase()) return "skipped";
+    if (sameQuestion) {
+      if (sameQuestion.answer.trim().toLowerCase() === trimmed.toLowerCase()) return "skipped";
+      // Raw page captures must not overwrite curated answers. (tags may be
+      // missing on rows imported from external JSON — treat those as curated.)
+      if (!(sameQuestion.tags ?? []).includes("auto_saved")) return "skipped";
+      await db.savedAnswers.put({
+        ...sameQuestion,
+        answer: trimmed,
+        updatedAt: timestamp
+      });
+      return "updated";
+    }
+
+    if (hasCloseAnswerMatch(field, existing, 0.9)) return "skipped";
+
     await db.savedAnswers.put({
-      ...sameQuestion,
+      id: crypto.randomUUID(),
+      title: question.slice(0, 80),
+      category: answerCategory(field.category),
+      originalQuestion: question,
+      normalizedQuestion,
       answer: trimmed,
+      tags: ["auto_saved", ...(field.category ? [field.category] : [])],
+      roleTypes: [],
+      companiesUsedFor: company ? [company] : [],
+      source: options?.source ?? "manual",
+      timesUsed: 0,
+      createdAt: timestamp,
       updatedAt: timestamp
     });
-    return "updated";
-  }
-
-  if (hasCloseAnswerMatch(field, existing, 0.9)) return "skipped";
-
-  await db.savedAnswers.put({
-    id: crypto.randomUUID(),
-    title: question.slice(0, 80),
-    category: answerCategory(field.category),
-    originalQuestion: question,
-    normalizedQuestion,
-    answer: trimmed,
-    tags: ["auto_saved", ...(field.category ? [field.category] : [])],
-    roleTypes: [],
-    companiesUsedFor: company ? [company] : [],
-    source: options?.source ?? "manual",
-    timesUsed: 0,
-    createdAt: timestamp,
-    updatedAt: timestamp
+    return "saved";
   });
-  return "saved";
 }
 
 /** @deprecated Use saveFieldAnswer */

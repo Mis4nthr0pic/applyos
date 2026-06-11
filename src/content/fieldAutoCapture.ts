@@ -17,6 +17,7 @@ import { extractDetectedFields, readFieldValue } from "./fieldDetection";
 
 let platform = "generic";
 let debounceTimer: number | undefined;
+let pendingElement: HTMLElement | undefined;
 const lastCaptured = new Map<string, string>();
 
 const TEXT_DEBOUNCE_MS = 700;
@@ -33,6 +34,16 @@ export function startFieldAutoCapture(currentPlatform: string): () => void {
       return;
     }
 
+    // Moving to a different element must not cancel the previous element's
+    // pending capture — flush it now so answers typed at normal tabbing speed
+    // still get saved.
+    if (pendingElement && pendingElement !== target) {
+      window.clearTimeout(debounceTimer);
+      const flushElement = pendingElement;
+      pendingElement = undefined;
+      captureFromElement(flushElement);
+    }
+
     window.clearTimeout(debounceTimer);
     const delay =
       event.type === "blur" && isComboboxInput(target)
@@ -40,7 +51,11 @@ export function startFieldAutoCapture(currentPlatform: string): () => void {
         : isComboboxInput(target) || isComboboxOptionElement(target)
           ? COMBOBOX_DEBOUNCE_MS
           : TEXT_DEBOUNCE_MS;
-    debounceTimer = window.setTimeout(() => captureFromElement(target), delay);
+    pendingElement = target;
+    debounceTimer = window.setTimeout(() => {
+      pendingElement = undefined;
+      captureFromElement(target);
+    }, delay);
   };
 
   document.addEventListener("change", handler, true);
@@ -53,6 +68,7 @@ export function startFieldAutoCapture(currentPlatform: string): () => void {
     document.removeEventListener("blur", handler, true);
     document.removeEventListener("click", handler, true);
     window.clearTimeout(debounceTimer);
+    pendingElement = undefined;
   };
 }
 

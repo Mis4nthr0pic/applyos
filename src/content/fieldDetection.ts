@@ -213,6 +213,9 @@ function buildAnonymousFieldIdentity(element: HTMLElement): string {
 
 function getOrCreateFieldId(element: HTMLElement): string {
   if (element instanceof HTMLInputElement && element.type === "radio") {
+    if (element.dataset.applyosFieldId && (element.name || element.dataset.applyosRadioGroup)) {
+      return element.dataset.applyosFieldId;
+    }
     const groupKey = element.name || getRadioGroupKey(element);
     if (groupKey) {
       const selector = element.name
@@ -281,15 +284,26 @@ function createSelectorHint(element: HTMLElement, fieldId: string): string {
 
 function getRadioGroupKey(radio: HTMLInputElement): string {
   if (radio.name) return radio.name;
+  // A previously tagged group keeps its key: hashing outerHTML again would
+  // produce a new key because tagging itself mutates the markup.
+  const tagged = radio.dataset.applyosRadioGroup;
+  if (tagged) return tagged;
   const scope = findNativeRadioGroupScope(radio);
   if (scope) {
-    const ids = Array.from(scope.querySelectorAll('input[type="radio"]'))
-      .map((item) => item.id || item.outerHTML)
+    const ids = Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
+      .map((item) => item.id || stableRadioIdentity(item))
       .sort()
       .join("|");
     return `unnamed:${hashString(ids)}`;
   }
   return radio.id ? `unnamed:${radio.id}` : "";
+}
+
+function stableRadioIdentity(radio: HTMLInputElement): string {
+  const clone = radio.cloneNode(false) as HTMLInputElement;
+  delete clone.dataset.applyosFieldId;
+  delete clone.dataset.applyosRadioGroup;
+  return clone.outerHTML;
 }
 
 function extractRadioGroupLabel(radio: HTMLInputElement): string {
@@ -362,7 +376,7 @@ function extractOptions(element: HTMLElement, scopeRoot: ParentNode = document):
       Array.from(
         scopeRoot.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(element.name)}"]`)
       )
-        .map((radio) => extractFieldLabel(radio) || radio.value)
+        .map((radio) => getRadioOptionLabel(radio) || radio.value)
         .filter(Boolean)
     );
   }

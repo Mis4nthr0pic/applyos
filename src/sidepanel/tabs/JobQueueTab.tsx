@@ -99,6 +99,8 @@ export function JobQueueTab(props: Props) {
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement
       ) return;
+      // Cmd+A / Ctrl+R etc. are browser shortcuts, not review actions.
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
       if (["n", "s", "k", "a", "r", "o"].includes(key)) event.preventDefault();
       if (key === "n") props.onNext();
@@ -179,6 +181,7 @@ export function JobQueueTab(props: Props) {
       {reviewMode ? (
         current ? (
           <ReviewCard
+            key={current.id}
             item={current}
             index={currentIndex}
             total={props.items.length}

@@ -26,6 +26,15 @@ const TAG_MATCH_CATEGORIES = new Set<FieldCategory>([
   "voluntary_disclosure"
 ]);
 
+/** Tokens too generic to indicate that two screening questions ask about the same thing. */
+const GENERIC_QUESTION_TOKENS = new Set([
+  "have", "with", "your", "yours", "what", "this", "that", "than", "then", "they", "them", "their", "there",
+  "many", "much", "years", "year", "experience", "work", "working", "worked", "please", "does", "will",
+  "would", "could", "should", "currently", "current", "describe", "tell", "about", "when", "where", "which",
+  "while", "from", "into", "other", "more", "most", "some", "such", "also", "been", "being", "were", "very",
+  "position", "role", "company", "question", "following", "apply", "applying", "application", "required"
+]);
+
 const SCREENING_LABEL_PATTERNS: Partial<Record<FieldCategory, RegExp>> = {
   gender: /\b(gender identity|gender|sex)\b/i,
   pronouns: /\b(preferred pronouns?|pronouns?|what are your pronouns)\b/i,
@@ -104,6 +113,12 @@ function questionMatchesCategory(question: string, category: FieldCategory): boo
   return pattern.test(question);
 }
 
+/** Whole-token containment — substring matching would let "java" match inside "javascript". */
+function corpusHasToken(corpus: string, token: string): boolean {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).test(corpus);
+}
+
 function pickPreferredAnswer(candidates: SavedAnswer[]): SavedAnswer {
   return [...candidates].sort((left, right) => {
     if (right.timesUsed !== left.timesUsed) return right.timesUsed - left.timesUsed;
@@ -144,14 +159,26 @@ export function findBestScreeningAnswer(
   }
 
   if (field.category === "screening_question") {
-    const labelTokens = normalizeText(field.label).split(/\s+/).filter((token) => token.length > 3);
-    const tokenMatches = answers.filter((answer) => {
-      if (isUnsafeShortAnswer(field, answer.answer)) return false;
-      const corpus = normalizeText(`${answer.title} ${answer.originalQuestion}`);
-      return labelTokens.filter((token) => corpus.includes(token)).length >= Math.min(2, labelTokens.length);
-    });
-    if (tokenMatches.length) {
-      return { answer: pickPreferredAnswer(tokenMatches), confidence: 0.75 };
+    const labelTokens = normalizeText(field.label)
+      .split(/\s+/)
+      .filter((token) => token.length > 3 && !GENERIC_QUESTION_TOKENS.has(token));
+    if (labelTokens.length) {
+      const scored = answers
+        .filter((answer) => !isUnsafeShortAnswer(field, answer.answer))
+        .map((answer) => {
+          const corpus = normalizeText(`${answer.title} ${answer.originalQuestion}`);
+          const overlap = labelTokens.filter((token) => corpusHasToken(corpus, token)).length;
+          return { answer, overlap };
+        })
+        .filter((entry) => entry.overlap >= Math.min(2, labelTokens.length));
+      if (scored.length) {
+        const bestOverlap = Math.max(...scored.map((entry) => entry.overlap));
+        const top = scored.filter((entry) => entry.overlap === bestOverlap).map((entry) => entry.answer);
+        const confidence = Math.min(0.9, 0.5 + 0.4 * (bestOverlap / labelTokens.length));
+        if (confidence >= minConfidence) {
+          return { answer: pickPreferredAnswer(top), confidence };
+        }
+      }
     }
   }
 

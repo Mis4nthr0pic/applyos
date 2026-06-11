@@ -19,8 +19,13 @@ interface Props {
 export function ExperienceDatabaseCard(props: Props) {
   const [markdown, setMarkdown] = React.useState(props.database?.markdown ?? "");
 
+  const lastIncoming = React.useRef(props.database?.markdown ?? "");
   React.useEffect(() => {
-    setMarkdown(props.database?.markdown ?? "");
+    // Only reset on real content changes — background refresh() must not wipe edits.
+    const incoming = props.database?.markdown ?? "";
+    if (incoming === lastIncoming.current) return;
+    lastIncoming.current = incoming;
+    setMarkdown(incoming);
   }, [props.database]);
 
   return (

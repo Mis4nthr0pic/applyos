@@ -48,8 +48,11 @@ async function extractPdfText(file: File): Promise<string> {
       const content = await page.getTextContent();
       pages.push(
         content.items
-          .map((item) => ("str" in item ? item.str : ""))
-          .join(" ")
+          // hasEOL preserves line structure; without it a whole page collapses
+          // to one line and section/heading parsing finds nothing.
+          .map((item) => ("str" in item ? `${item.str}${item.hasEOL ? "\n" : " "}` : ""))
+          .join("")
+          .replace(/[ \t]+\n/g, "\n")
           .trim()
       );
     }
